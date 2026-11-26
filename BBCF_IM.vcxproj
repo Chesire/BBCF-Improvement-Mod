@@ -53,6 +53,7 @@
     <ClCompile Include="src\Overlay\Window\ComboListWindow.cpp" />
     <ClCompile Include="src\Game\ComboList\ComboLibrary.cpp" />
     <ClCompile Include="src\Game\ComboList\ComboParser.cpp" />
+    <ClCompile Include="src\Game\ComboList\ComboTracker.cpp" />
     <ClCompile Include="src\Overlay\Window\FrameAdvantage\PlayerExtendedData.cpp" />
     <ClCompile Include="src\Game\Jonb\JonbDBReader.cpp" />
     <ClCompile Include="src\Game\Playbacks\PlaybackSlot.cpp" />
@@ -243,6 +244,7 @@
     <ClInclude Include="src\Overlay\Window\ComboListWindow.h" />
     <ClInclude Include="src\Game\ComboList\ComboLibrary.h" />
     <ClInclude Include="src\Game\ComboList\ComboParser.h" />
+    <ClInclude Include="src\Game\ComboList\ComboTracker.h" />
     <ClInclude Include="src\Overlay\Window\FrameAdvantage\PlayerExtendedData.h" />
     <ClInclude Include="src\Game\Jonb\JonbDBEntry.h" />
     <ClInclude Include="src\Game\Jonb\JonbDBReader.h" />

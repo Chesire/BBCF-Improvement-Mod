@@ -7,6 +7,8 @@
 
 #include <imgui.h>
 
+#include <cstring>
+
 namespace
 {
 	// How often to check the combo file for edits. Half a second is quick enough to feel
@@ -17,6 +19,9 @@ namespace
 
 	const ImVec4 kWarningColor(1.0f, 0.8f, 0.3f, 1.0f);
 	const ImVec4 kStepNumberColor(0.6f, 0.6f, 0.6f, 1.0f);
+	const ImVec4 kLandedColor(0.35f, 0.9f, 0.4f, 1.0f);
+	const ImVec4 kMissedColor(1.0f, 0.4f, 0.35f, 1.0f);
+	const ImVec4 kNextStepColor(1.0f, 0.85f, 0.3f, 1.0f);
 }
 
 bool ComboListWindow::IsUsableNow()
@@ -124,12 +129,82 @@ void ComboListWindow::DrawBody()
 		return;
 	}
 
+	const Combo& combo = combos[m_selectedCombo];
+	UpdateTracker(combo);
+
 	DrawSelector();
 	ImGui::Separator();
-	DrawSteps(combos[m_selectedCombo]);
+	DrawStatus(combo);
+	DrawSteps(combo);
 
 	ImGui::Separator();
 	DrawTextSize();
+	ImGui::Checkbox("Show move names", &m_showMoveNames);
+	ImGui::ShowHelpMarkerSameLine("Shows the game's name for each move that lands. Put a name after a '|' on a step (\"5B | NmlAtk5B\") so only that move ticks the step off.");
+	if (m_showMoveNames)
+		DrawMoveNames(combo);
+}
+
+void ComboListWindow::UpdateTracker(const Combo& combo)
+{
+	if (m_selectedCombo != m_trackedCombo || m_watchedSide != m_trackedSide
+		|| m_library.Generation() != m_trackedGeneration)
+	{
+		m_tracker.Reset(&combo);
+		m_trackedCombo = m_selectedCombo;
+		m_trackedSide = m_watchedSide;
+		m_trackedGeneration = m_library.Generation();
+	}
+
+	const Player& attackerPlayer = m_watchedSide == 0 ? g_interfaces.player1 : g_interfaces.player2;
+	const Player& defenderPlayer = m_watchedSide == 0 ? g_interfaces.player2 : g_interfaces.player1;
+	if (attackerPlayer.IsCharDataNullPtr() || defenderPlayer.IsCharDataNullPtr() || !g_gameVals.pFrameCount)
+		return;
+
+	const CharData* attacker = attackerPlayer.GetData();
+	const CharData* defender = defenderPlayer.GetData();
+
+	ComboTrackerFrame frame;
+	// Bounded copy: the game's buffer is fixed-size and not guaranteed to be terminated.
+	frame.attackerAction.assign(attacker->currentAction,
+		strnlen(attacker->currentAction, sizeof(attacker->currentAction)));
+	frame.attackerStateChanges = attacker->stateChangedCount;
+	frame.defenderHitCount = defender->hitCount;
+	frame.frameCount = *g_gameVals.pFrameCount;
+	m_tracker.OnFrame(frame, combo);
+}
+
+void ComboListWindow::DrawStatus(const Combo& combo)
+{
+	size_t hitSteps = 0;
+	size_t landed = 0;
+	for (size_t i = 0; i < combo.steps.size(); ++i)
+	{
+		if (ComboTracker::IsNonHitStep(combo.steps[i]))
+			continue;
+		++hitSteps;
+		if (m_tracker.StepState(i) == ComboStepState::Landed)
+			++landed;
+	}
+
+	switch (m_tracker.RunState())
+	{
+	case ComboRunState::Idle:
+		ImGui::TextDisabled("Waiting for the first hit");
+		break;
+	case ComboRunState::InProgress:
+		ImGui::TextColored(kNextStepColor, "%d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
+		break;
+	case ComboRunState::Completed:
+		ImGui::TextColored(kLandedColor, "Complete! %d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
+		break;
+	case ComboRunState::Dropped:
+		ImGui::TextColored(kMissedColor, "Dropped at %d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
+		break;
+	case ComboRunState::OffRoute:
+		ImGui::TextColored(kMissedColor, "Off route: %s landed", m_tracker.OffRouteAction().c_str());
+		break;
+	}
 }
 
 void ComboListWindow::DrawHeader()
@@ -223,25 +298,108 @@ void ComboListWindow::DrawSteps(const Combo& combo)
 		ImGui::PopStyleColor();
 	}
 
+	const bool tracking = m_tracker.RunState() != ComboRunState::Idle;
+
 	if (m_oneLine)
 	{
-		std::string line;
+		// Coloured pieces laid out by hand, since one Text() call can only have one colour.
+		const float wrapX = ImGui::GetCursorPosX() + kWrapWidth * m_fontScale;
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
 		for (size_t i = 0; i < combo.steps.size(); ++i)
 		{
+			const std::string piece = (i > 0 ? "> " : "") + combo.steps[i].notation;
 			if (i > 0)
-				line += " > ";
-			line += combo.steps[i].notation;
+			{
+				ImGui::SameLine(0.0f, spacing);
+				if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(piece.c_str()).x > wrapX)
+					ImGui::NewLine();
+			}
+			ImGui::TextColored(StepColor(combo, i, tracking), "%s", piece.c_str());
 		}
-		ImGui::TextUnformatted(line.c_str());
 		return;
 	}
 
 	for (size_t i = 0; i < combo.steps.size(); ++i)
 	{
-		ImGui::TextColored(kStepNumberColor, "%2d.", static_cast<int>(i + 1));
+		ImGui::TextColored(kStepNumberColor, "%s%2d.", StepMarker(i, tracking), static_cast<int>(i + 1));
 		ImGui::SameLine();
-		ImGui::TextUnformatted(combo.steps[i].notation.c_str());
+		ImGui::TextColored(StepColor(combo, i, tracking), "%s", combo.steps[i].notation.c_str());
 	}
+}
+
+const char* ComboListWindow::StepMarker(size_t index, bool tracking) const
+{
+	switch (m_tracker.StepState(index))
+	{
+	case ComboStepState::Landed: return "[x]";
+	case ComboStepState::Missed: return "[!]";
+	default: break;
+	}
+	if (tracking && m_tracker.RunState() == ComboRunState::InProgress && index == m_tracker.NextStep())
+		return " > ";
+	return "[ ]";
+}
+
+ImVec4 ComboListWindow::StepColor(const Combo& combo, size_t index, bool tracking) const
+{
+	switch (m_tracker.StepState(index))
+	{
+	case ComboStepState::Landed: return kLandedColor;
+	case ComboStepState::Missed: return kMissedColor;
+	default: break;
+	}
+	if (tracking && m_tracker.RunState() == ComboRunState::InProgress && index == m_tracker.NextStep())
+		return kNextStepColor;
+	if (ComboTracker::IsNonHitStep(combo.steps[index]))
+		return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+	return ImGui::GetStyleColorVec4(ImGuiCol_Text);
+}
+
+void ComboListWindow::DrawMoveNames(const Combo& combo)
+{
+	const Player& attackerPlayer = m_watchedSide == 0 ? g_interfaces.player1 : g_interfaces.player2;
+	if (!attackerPlayer.IsCharDataNullPtr())
+	{
+		const CharData* attacker = attackerPlayer.GetData();
+		const std::string now(attacker->currentAction, strnlen(attacker->currentAction, sizeof(attacker->currentAction)));
+		ImGui::TextDisabled("Now:");
+		ImGui::SameLine();
+		ImGui::TextUnformatted(now.c_str());
+	}
+
+	const std::vector<std::string>& moves = m_tracker.LandedMoves();
+	if (moves.empty())
+	{
+		ImGui::TextDisabled("Land a combo to list its moves.");
+		return;
+	}
+
+	ImGui::TextDisabled("Last combo:");
+	for (size_t i = 0; i < moves.size(); ++i)
+		ImGui::Text("%2d. %s", static_cast<int>(i + 1), moves[i].c_str());
+
+	if (ImGui::Button("Copy as steps"))
+	{
+		// Pair the landed moves with this combo's hitting steps, in order, so the result can
+		// be pasted over the combo's step lines as-is. Extra moves are written bare.
+		std::string text;
+		size_t step = 0;
+		for (size_t i = 0; i < moves.size(); ++i)
+		{
+			while (step < combo.steps.size() && ComboTracker::IsNonHitStep(combo.steps[step]))
+			{
+				text += combo.steps[step].notation + " | - > ";
+				++step;
+			}
+			if (step < combo.steps.size())
+				text += combo.steps[step++].notation + " | ";
+			text += moves[i];
+			if (i + 1 < moves.size())
+				text += " > ";
+		}
+		ImGui::SetClipboardText(text.c_str());
+	}
+	ImGui::ShowHelpMarkerSameLine("Copies the moves as \"notation | name > ...\", matched up with this combo's steps in order. Check the pairing before pasting it into the file.");
 }
 
 void ComboListWindow::DrawTextSize()

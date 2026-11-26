@@ -2,6 +2,7 @@
 #include "IWindow.h"
 
 #include "Game/ComboList/ComboLibrary.h"
+#include "Game/ComboList/ComboTracker.h"
 
 // Training-mode window that shows combos written in BBCF_IM\Combos\<Character>.txt.
 // It only draws while a training match is running; outside of one it stays "open" but hidden,
@@ -31,7 +32,12 @@ private:
 	void DrawMissingFile();
 	void DrawIssues();
 	void DrawSelector();
+	void UpdateTracker(const Combo& combo);
+	void DrawStatus(const Combo& combo);
 	void DrawSteps(const Combo& combo);
+	void DrawMoveNames(const Combo& combo);
+	const char* StepMarker(size_t index, bool tracking) const;
+	ImVec4 StepColor(const Combo& combo, size_t index, bool tracking) const;
 	void DrawTextSize();
 
 	ComboLibrary m_library;
@@ -39,5 +45,11 @@ private:
 	int m_selectedCombo = 0;
 	int m_framesUntilPoll = 0;
 	bool m_oneLine = false;
+	bool m_showMoveNames = false;
+
+	ComboTracker m_tracker;
+	int m_trackedCombo = -1;
+	int m_trackedSide = -1;
+	unsigned m_trackedGeneration = 0;
 	float m_fontScale = 1.0f;
 };
