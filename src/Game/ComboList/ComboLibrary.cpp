@@ -71,6 +71,7 @@ bool ComboLibrary::ReadStamp(uint64_t& outWriteTime, uint64_t& outSize) const
 
 void ComboLibrary::ReadFile()
 {
+	++m_generation;
 	m_combos.clear();
 	m_issues.clear();
 	m_writeTime = 0;

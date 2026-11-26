@@ -24,6 +24,8 @@ public:
 	const std::string& RelativePath() const { return m_relativePath; }
 	const std::vector<Combo>& Combos() const { return m_combos; }
 	const std::vector<ComboFileIssue>& Issues() const { return m_issues; }
+	// Changes every time the file is (re)read, so holders of indices know to start over.
+	unsigned Generation() const { return m_generation; }
 
 	static std::string RelativePathFor(int charIndex);
 
@@ -32,6 +34,7 @@ private:
 	void ReadFile();
 
 	int m_charIndex = -1;
+	unsigned m_generation = 0;
 	bool m_fileExists = false;
 	uint64_t m_writeTime = 0;
 	uint64_t m_size = 0;

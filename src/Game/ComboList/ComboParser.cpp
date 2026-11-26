@@ -36,13 +36,18 @@ namespace
 		return true;
 	}
 
-	// "5B -" (left over from "5B -> 5C") becomes "5B".
+	// "5B -" (left over from "5B -> 5C") becomes "5B". A "-" match key ("jc | -", the
+	// marker for a step that never hits) is left alone.
 	std::string StripArrowTail(const std::string& piece)
 	{
-		std::string s = Trim(piece);
+		const std::string original = Trim(piece);
+		std::string s = original;
 		while (!s.empty() && (s.back() == '-' || s.back() == '='))
 			s.pop_back();
-		return Trim(s);
+		s = Trim(s);
+		if (!s.empty() && s.back() == '|')
+			return original;
+		return s;
 	}
 
 	void AddSteps(const std::string& line, Combo& combo)
