@@ -60,6 +60,7 @@ namespace MainMenu
 		Overlays_HpNumbers,
 		Overlays_InputDisplay,
 		Overlays_ComboData,
+		Overlays_ComboList,
 
 		Online_Window,
 		Online_Ranked,

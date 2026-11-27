@@ -313,7 +313,7 @@ namespace MainMenu
 		ImGui::Separator();
 		ImGui::VerticalSpacing(4);
 
-		// Three buttons that each open a window. They do not need a heading between them.
+		// Buttons that each open a window. They do not need a heading between them.
 		if (scr)
 		{
 			Anchor(Overlays_InputDisplay);
@@ -321,6 +321,14 @@ namespace MainMenu
 			ImGui::SameLineOrWrap(ImGui::ButtonWidth("Combo Data"));
 			Anchor(Overlays_ComboData);
 			scr->DrawComboDataButton();
+			ImGui::SameLineOrWrap(ImGui::ButtonWidth("Combo List"));
 		}
+
+		Anchor(Overlays_ComboList);
+		if (ImGui::Button("Combo List"))
+		{
+			ctx.container->GetWindow(WindowType_ComboList)->ToggleOpen();
+		}
+		ImGui::ShowHelpMarkerSameLine("Shows combos you write in BBCF_IM\\Combos\\<Character>.txt while you practise in training mode. The window hides itself outside training.");
 	}
 }

@@ -42,6 +42,7 @@ namespace MainMenu
 			{ Page_Overlays, Item_Group,   "HP numbers",          "hp number health bar damage abyss figure training" },
 			{ Page_Overlays, Item_Loose,   "Input display",       "input buffer p1 p2 inputs notation display" },
 			{ Page_Overlays, Item_Loose,   "Combo data",          "combo damage proration counter hits" },
+			{ Page_Overlays, Item_Loose,   "Combo list",          "combo list trial route notation practice checklist bnb" },
 
 			{ Page_Online, Item_Loose,   "Open the online window",              "room window who is in the room players list spectator" },
 			{ Page_Online, Item_Section, "Ranked",                              "ranked lp rank ladder leaderboard prediction square color progress" },

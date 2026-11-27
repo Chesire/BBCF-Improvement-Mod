@@ -10,6 +10,7 @@
 #include "Overlay/Window/ScrWindow.h"
 #include "Overlay/Window/InputBufferWindow.h"
 #include "Overlay/Window/ComboDataWindow.h"
+#include "Overlay/Window/ComboListWindow.h"
 #include "Overlay/Window/ReplayDBPopupWindow.h" 
 #include "Overlay/Window/PaletteSharePopupWindow.h"
 #include "Overlay/Window/FrameHistory/FrameHistoryWindow.h"
@@ -73,6 +74,9 @@ WindowContainer::WindowContainer()
 
 	AddWindow(WindowType_ComboData,
 		new ComboDataWindow("Combo Data", true, ImGuiWindowFlags_AlwaysAutoResize));
+
+	AddWindow(WindowType_ComboList,
+		new ComboListWindow("Combo List###ComboList", true, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse));
 
 	AddWindow(WindowType_ReplayDBPopup,
 		new ReplayDBPopupWindow("Replay DB Popup", true, *this, ImGuiWindowFlags_NoTitleBar));
