@@ -41,43 +41,71 @@ j.C > 5C > 2C > 5D
 
 While you play, each step is marked as it lands: `[x]` landed, ` > ` next, `[!]` the step
 where the wrong move landed. The status line says whether the attempt is in progress,
-complete, dropped, or off route. A new combo (the dummy's hit counter starting again)
-starts a new attempt automatically, and so does a training reset.
+complete, dropped, or off route (and which move landed instead). A new combo (the dummy's
+hit counter starting again) starts a new attempt automatically, and so does a training reset.
 
-### Match keys
+### What a step accepts
 
-Without match keys, any move that lands ticks off the next step, so the window only checks
-that you hit the right *number* of moves. To check the right moves, give a step the game's
-name for the move after a `|`:
+Steps are worked out from what you write; hover a step to see exactly what ticks it off.
+
+| You write | Accepts | Notes |
+|---|---|---|
+| `5A`, `2B`, `6A`, `3C`, `5D (2nd)` | that normal only (`NmlAtk5A`, ...) | |
+| `j.5C`, `j5C`, `sj.5C`, `j.2C` | that air normal only (`NmlAtkAIR5C`, ...) | shown as `j.5C` |
+| `B+C` (`BC`, `6BC`, `Throw`), `4B+C`, `j.B+C` | forward, back and air throw | |
+| `A+B` (`CT`), `6A+B` (`CA`), `EA` | Crush Trigger, Counter Assault, Exceed Accel | |
+| `NmlAtk2A`, `ThrowExe`, any state name | that state | shown as the move: `NmlAtk2A` shows `2A` |
+| `jc`, `sjc`, `dash`, `land`, `dl.`, `66`, `OD`, ... | nothing, never checked | auto-pass: ticks itself once the step before it lands |
+| `236D`, `j.214B`, `[4]6D` (not in the moves file) | any special, never a normal or throw | marked `?` |
+| `236D` with `236D = Skill1` in the moves file | that special only | |
+| anything else | any move | marked `?` |
+
+An attack always needs its direction number: write `j.5C`, not `j.C`. That keeps `jc`
+(jump cancel) and `sjc` (super jump cancel) unambiguous. A normal the character does not
+have (a typo) is marked `!` and still only accepts that exact state, so nothing else ticks it.
+
+`step | name` overrides all of this for one step: `5B | NmlAtk5B`, `j.5C | j.5C/j.5B`
+(either), or `| -` to make any step auto-pass.
+
+### The moves file (specials)
+
+Normals and throws follow a fixed naming scheme in the game's scripts, so they are decoded
+(the same rules `ScrStateNames` uses for the dummy-action move picker, run backwards). A
+character's specials have arbitrary names (`Skill1`, `GauntletHades`), so they need a
+mapping, one file per character: `BBCF_IM\Combos\Moves\<Character>.txt`.
 
 ```
-combo: Midscreen BnB
-5B | NmlAtk5B > 5C | NmlAtk5C > jc | - > j.C | NmlAtkAirC
+# notation = StateName[/StateName...]
+236D = Skill1
+214D = Skill2/Skill2Air
 ```
 
-- `|` then a name: only that move ticks the step off. Case-insensitive.
-- `A/B`: either name counts (for moves with an air or alternate version).
-- `-`: a step that never hits (jump cancel, dash). It is ticked off when the step after it
-  lands, and a trailing one does not stop a combo from completing.
-
-The names above are examples of the pattern, not checked names. To get the real ones, tick
-**Show move names**, land the combo once, then press **Copy as steps**. That copies the
-landed moves paired with the selected combo's steps, ready to paste into the file.
+The window offers to create the file when a combo has unmapped specials; it lists every
+special state in the character's script as comments. To find which state a special is, tick
+**Show move names**, do the combo, and press **Copy moves file lines**: it copies
+`notation = StateName` lines for the unmapped steps, pairing steps and landed moves in order.
 
 ### How hits are detected (and what that misses)
 
-- A step lands when the dummy's combo hit counter goes up. The move credited is whatever
-  your character is doing on that frame.
-- Each move *instance* is credited once, so a multi-hit move is one step and doing the same
-  move twice is two steps.
-- Projectiles and summons that hit while your character is doing something else are
-  credited to that something else. Leave those steps without a key, or use `A/B`.
+- The character's script is read once per character load: every state name, and the
+  cancel lists (`whiffCancel` / `hitOrBlockCancel`) that name the moves you can cancel into.
+- The attacker's states are followed as they change. Some states start a move (any normal,
+  a cancel target, a special out of neutral or out of a normal, anything a step or the
+  moves file names). The rest continue the current move: `ThrowExe` after `NmlAtkThrow`,
+  `NmlAtk5D_2nd` after `NmlAtk5D`, a special's later states.
+- When the dummy's combo hit counter goes up, the move last started is credited, once. A
+  multi-hit move is one step; the same move again is a new step. A projectile that hits
+  after you recover still credits the special that threw it, if nothing new was started.
+- A special cancelled straight into another special counts as one move unless the script
+  lists the second as a cancel target or the moves file names it. Map supers and rekkas if
+  they do not tick.
 
 ## Code
 
 | Piece | Where |
 |---|---|
 | Parser (plain C++, no Win32/ImGui) | `src/Game/ComboList/ComboParser.*` |
+| Notation to state names (plain C++) | `src/Game/ComboList/MoveTable.*` |
 | Hit tracking rules (plain C++) | `src/Game/ComboList/ComboTracker.*` |
 | File loading and change polling | `src/Game/ComboList/ComboLibrary.*` |
 | Window | `src/Overlay/Window/ComboListWindow.*` |

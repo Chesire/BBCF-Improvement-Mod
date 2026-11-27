@@ -56,7 +56,7 @@ jobs:
           for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSPATH=%%i"
           call "%VSPATH%\VC\Auxiliary\Build\vcvarsall.bat" x86 || exit /b 1
           if not exist build\tests mkdir build\tests
-          cl /nologo /EHsc /W4 /I src tools\tests\combo_list_tests.cpp src\Game\ComboList\ComboParser.cpp src\Game\ComboList\ComboTracker.cpp /Fobuild\tests\ /Fe:build\tests\combo_list_tests.exe || exit /b 1
+          cl /nologo /EHsc /W4 /I src tools\tests\combo_list_tests.cpp src\Game\ComboList\ComboParser.cpp src\Game\ComboList\ComboTracker.cpp src\Game\ComboList\MoveTable.cpp src\Game\Scr\ScrStateNames.cpp /Fobuild\tests\ /Fe:build\tests\combo_list_tests.exe || exit /b 1
           build\tests\combo_list_tests.exe
 
       # The build's packaging step (tools/package_release.ps1) zips the DLL and moves the loose

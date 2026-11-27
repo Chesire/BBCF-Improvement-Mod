@@ -247,6 +247,7 @@
     <ClCompile Include="src\Game\ComboList\ComboLibrary.cpp" />
     <ClCompile Include="src\Game\ComboList\ComboParser.cpp" />
     <ClCompile Include="src\Game\ComboList\ComboTracker.cpp" />
+    <ClCompile Include="src\Game\ComboList\MoveTable.cpp" />
     <ClCompile Include="src\Game\SnapshotApparatus\SnapshotApparatus.cpp" />
     <ClCompile Include="src\Game\SnapshotApparatus\SnapshotSlotPool.cpp" />
     <ClCompile Include="src\Network\ReplayUploadManager.cpp" />
@@ -514,6 +515,7 @@
     <ClInclude Include="src\Game\ComboList\ComboLibrary.h" />
     <ClInclude Include="src\Game\ComboList\ComboParser.h" />
     <ClInclude Include="src\Game\ComboList\ComboTracker.h" />
+    <ClInclude Include="src\Game\ComboList\MoveTable.h" />
     <ClInclude Include="src\Game\GhidraDefs.h" />
     <ClInclude Include="src\Game\SnapshotApparatus\SnapshotApparatus.h" />
     <ClInclude Include="src\Game\SnapshotApparatus\SnapshotSlotPool.h" />
