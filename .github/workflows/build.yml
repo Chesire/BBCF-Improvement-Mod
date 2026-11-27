@@ -1,0 +1,81 @@
+name: Build
+
+# Builds dinput8.dll (Release|Win32) on every push so the mod can be tested without a
+# Windows machine. The built DLL is attached to each run as the "BBCF_IM-Release-<sha>"
+# artifact (Actions tab > the run > Artifacts).
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      # The mod uses ATL (atlbase.h / atlstr.h). Install the component only if this runner
+      # image does not already have it, since modifying Visual Studio takes a few minutes.
+      - name: Ensure Visual Studio has the ATL component
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          $withAtl = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.ATL -property installationPath
+          if ($withAtl) {
+            Write-Host "ATL already installed in $withAtl"
+            exit 0
+          }
+          Write-Host "Installing ATL into $vsPath"
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $installArgs = @('modify', '--installPath', "`"$vsPath`"", '--add', 'Microsoft.VisualStudio.Component.VC.ATL', '--quiet', '--norestart', '--nocache')
+          $p = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "vs_installer exited with $($p.ExitCode)" }
+
+      # cmd, not the default pwsh: the build's PowerShell 5.1 scripts would otherwise inherit
+      # PowerShell 7's PSModulePath and fail to load built-ins such as Get-FileHash.
+      - name: Build (Release|Win32)
+        shell: cmd
+        run: msbuild BBCF_IM.sln /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /v:minimal /nologo
+
+      # Only present once the combo list code is merged; skipped until then.
+      - name: Run combo list tests
+        if: hashFiles('tools/tests/combo_list_tests.cpp') != ''
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSPATH=%%i"
+          call "%VSPATH%\VC\Auxiliary\Build\vcvarsall.bat" x86 || exit /b 1
+          if not exist build\tests mkdir build\tests
+          cl /nologo /EHsc /W4 /I src tools\tests\combo_list_tests.cpp src\Game\ComboList\ComboParser.cpp src\Game\ComboList\ComboTracker.cpp /Fobuild\tests\ /Fe:build\tests\combo_list_tests.exe || exit /b 1
+          build\tests\combo_list_tests.exe
+
+      # The build's packaging step (tools/package_release.ps1) zips the DLL and moves the loose
+      # DLL + PDB into build\symbols\<version>\Release. Gather both in one flat folder.
+      - name: Collect build output
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          $dll = Get-ChildItem build\symbols -Recurse -Filter dinput8.dll | Where-Object { $_.FullName -like '*\Release\*' } | Select-Object -First 1
+          if (-not $dll) { throw "dinput8.dll not found under build\symbols" }
+          Copy-Item $dll.FullName artifact\
+          $pdb = Join-Path $dll.DirectoryName 'dinput8.pdb'
+          if (Test-Path $pdb) { Copy-Item $pdb artifact\ }
+          Copy-Item bin\Release\*.zip artifact\
+          Get-ChildItem artifact | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BBCF_IM-Release-${{ github.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 30
