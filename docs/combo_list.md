@@ -82,8 +82,40 @@ mapping, one file per character: `BBCF_IM\Combos\Moves\<Character>.txt`.
 
 The window offers to create the file when a combo has unmapped specials; it lists every
 special state in the character's script as comments. To find which state a special is, tick
-**Show move names**, do the combo, and press **Copy moves file lines**: it copies
-`notation = StateName` lines for the unmapped steps, pairing steps and landed moves in order.
+**Show move names** and do the move: the list names the state each move was credited to.
+
+If you write a combo with unmapped specials (`5C > 236D`) and complete it, **Copy moves
+file lines** appears under the list. It copies a `notation = StateName` line for each step
+that is not checked exactly yet, naming the move that ticked it off (`236D = Skill1`). It
+only appears after a completed attempt: then the tracker itself matched every step to a
+move, in order. After a dropped or off-route attempt, or a different combo, pairing the
+selected combo's steps with whatever landed would be guesswork, so it is not offered.
+
+### Copying the combo you just did
+
+With **Show move names** ticked, **Copy combo** copies the last combo as a combo-file entry,
+ready to paste into `<Character>.txt` (rename it from "Recorded"):
+
+```
+combo: Recorded
+B+C > StandDrive > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C
+```
+
+- Normals are written as notation (`5C`, `3C`, `j.5C`, `5D (2nd)`), and the universal moves
+  as their alias (`B+C`, `4B+C`, `j.B+C`, `A+B`, `6A+B`, `EA`).
+- A special is written the way the moves file names it (`236A` for `236A = Assault_A`). If
+  the moves file does not name it, it is written as its state name (`StandDrive`), which
+  tracks exactly; inputs for specials are never guessed. Replace the name with notation
+  once you have mapped it.
+- Each step resolves back to exactly the state that landed (anything that would not, for
+  example because a moves-file line took over `2C`, is written as the state name instead).
+- One step per move. A multi-hit move is one step. There is one exception: a later hit that
+  landed after cancelling into a state that is credited elsewhere in the same combo gets
+  its own step. A special cancelled into another special (`5D` into `236A`) counts as one
+  move unless something names the second one; the copy names it (it is a step later in the
+  combo), so it would count as its own move when tracked, and the copy has to list it.
+- Movement (`jc`, `dash`, ...) is not recorded, so it is not in the copy. It is never
+  checked anyway; add it back if you want it shown.
 
 ### How hits are detected (and what that misses)
 
@@ -106,12 +138,13 @@ special state in the character's script as comments. To find which state a speci
 |---|---|
 | Parser (plain C++, no Win32/ImGui) | `src/Game/ComboList/ComboParser.*` |
 | Notation to state names (plain C++) | `src/Game/ComboList/MoveTable.*` |
-| Hit tracking rules (plain C++) | `src/Game/ComboList/ComboTracker.*` |
+| Hit tracking rules, and the copy buttons' text (`ComboRecording`, plain C++) | `src/Game/ComboList/ComboTracker.*` |
 | File loading and change polling | `src/Game/ComboList/ComboLibrary.*` |
 | Window | `src/Overlay/Window/ComboListWindow.*` |
 | Menu button | `src/Overlay/Window/MainMenu/PageOverlays.cpp` (`Overlays_ComboList`) |
 
 ## Tests
 
-The parser and tracker have tests that build anywhere with a C++14 compiler; see the top of
+The parser, the notation round trip (`MoveTable::NotationFor`), the tracker and the copied
+text have tests that build anywhere with a C++14 compiler; see the top of
 `tools/tests/combo_list_tests.cpp` for the one-line build command.

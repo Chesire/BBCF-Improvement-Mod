@@ -59,6 +59,22 @@ namespace
 		{ "exceedaccel",    "NmlAtkExcite" },
 	};
 
+	// The way a player writes each universal move, for NotationFor. kAliases holds normalized
+	// text ("jbc"), which resolves but is not what anybody types.
+	struct WrittenAlias
+	{
+		const char* state;
+		const char* notation;
+	};
+	const WrittenAlias kWrittenAliases[] = {
+		{ "NmlAtkThrow",      "B+C" },
+		{ "NmlAtkBackThrow",  "4B+C" },
+		{ "NmlAtkAirThrow",   "j.B+C" },
+		{ "NmlAtkGuardCrush", "A+B" },
+		{ "NmlAtkDeadAngle",  "6A+B" },
+		{ "NmlAtkExcite",     "EA" },
+	};
+
 	// Steps that are movement, not attacks: AutoPass. Overdrive activation is here too: it does
 	// not hit.
 	const char* const kAutoPass[] = {
@@ -182,6 +198,21 @@ namespace
 		}
 		return false;
 	}
+
+	// Can this text stand as a step in a combo file line and come back from ComboParser as
+	// the same notation? '>' and '|' split it, '#' at the start of a line makes it a comment,
+	// and a trailing '-' or '=' is taken for the tail of a "->" arrow.
+	bool IsSafeStepText(const std::string& text)
+	{
+		if (text.empty() || text != Trim(text) || text[0] == '#')
+			return false;
+		if (text.find_first_of(">|\r\n") != std::string::npos)
+			return false;
+		if (text.back() == '-' || text.back() == '=')
+			return false;
+		const std::string lower = Lower(text);
+		return !StartsWith(lower, "combo:") && !StartsWith(lower, "note:");
+	}
 }
 
 std::string MoveTable::DisplayName(const std::string& state)
@@ -234,6 +265,7 @@ std::vector<int> MoveTable::SetUserMappings(const std::string& fileText)
 {
 	m_user.clear();
 	m_userStates.clear();
+	m_userNotation.clear();
 	std::vector<int> badLines;
 
 	int lineNumber = 0;
@@ -262,12 +294,14 @@ std::vector<int> MoveTable::SetUserMappings(const std::string& fileText)
 			continue;
 		}
 
+		const std::string written = Trim(line.substr(0, eq));
 		std::vector<std::string>& states = m_user[lhs];
 		for (const std::string& s : rhs)
 		{
 			const std::string canonical = Canonical(s);
 			states.push_back(canonical);
 			m_userStates.insert(Lower(canonical));
+			m_userNotation.emplace(Lower(canonical), written); // the first line naming it wins
 		}
 	}
 	return badLines;
@@ -395,6 +429,54 @@ ResolvedStep MoveTable::Resolve(const std::string& notation, const std::string& 
 
 	step.match = LooksLikeSpecial(notation) ? StepMatch::AnySpecial : StepMatch::AnyMove;
 	return step;
+}
+
+bool MoveTable::ResolvesExactlyTo(const std::string& notation, const std::string& state) const
+{
+	if (!IsSafeStepText(notation))
+		return false;
+	const ResolvedStep step = Resolve(notation, "");
+	if (step.match != StepMatch::Exact)
+		return false;
+	const std::string lower = Lower(state);
+	for (const std::string& key : step.keys)
+	{
+		if (Lower(key) == lower)
+			return true;
+	}
+	return false;
+}
+
+std::string MoveTable::NotationFor(const std::string& state) const
+{
+	const std::string canonical = Canonical(state);
+	const std::string lower = Lower(canonical);
+
+	// Candidates in order of preference; the first that resolves back to the state wins. Each
+	// is checked rather than trusted because the resolution order can hand the text to
+	// something else (a moves-file line "2C = Skill1" takes "2C" away from NmlAtk2C).
+	std::vector<std::string> candidates;
+	auto user = m_userNotation.find(lower);
+	if (user != m_userNotation.end())
+		candidates.push_back(user->second);
+	for (const WrittenAlias& alias : kWrittenAliases)
+	{
+		if (Lower(alias.state) == lower)
+			candidates.push_back(alias.notation);
+	}
+	// A normal's display form is its notation (5C, j.5C, 5D (2nd)). A special's display form
+	// is only its name split up ("Stand Drive"), so it is not offered: the raw name is clearer
+	// about what it is, and is what the moves file needs.
+	if (ScrStateNames::Categorize(canonical) == ScrStateNames::Category::Normal)
+		candidates.push_back(DisplayName(canonical));
+	candidates.push_back(canonical);
+
+	for (const std::string& candidate : candidates)
+	{
+		if (ResolvesExactlyTo(candidate, canonical))
+			return candidate;
+	}
+	return canonical;
 }
 
 bool MoveTable::IsSpecial(const std::string& state) const

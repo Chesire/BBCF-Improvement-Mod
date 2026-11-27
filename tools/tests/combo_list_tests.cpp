@@ -179,7 +179,8 @@ struct Sim
 	std::string act = "CmnActStand";
 	int hits = 0;
 
-	explicit Sim(const std::string& text, const std::string& movesFile = "") : table(TestTable(movesFile))
+	explicit Sim(const std::string& text, const std::string& movesFile = "") : Sim(TestTable(movesFile), text) {}
+	Sim(const MoveTable& moveTable, const std::string& text) : table(moveTable)
 	{
 		const Combo combo = Parse(text).at(0);
 		for (const ComboStep& step : combo.steps)
@@ -323,11 +324,233 @@ static void TrackerTests()
 	}
 }
 
+// Resolve(NotationFor(state)) must come back Exact with that state, for every state.
+static bool RoundTrips(const MoveTable& t, const std::string& state)
+{
+	const ResolvedStep s = R(t, t.NotationFor(state));
+	if (s.match != StepMatch::Exact)
+		return false;
+	for (const std::string& key : s.keys)
+	{
+		if (key == state)
+			return true;
+	}
+	return false;
+}
+
+static void NotationTests()
+{
+	const MoveTable plain = TestTable();
+	CHECK(plain.NotationFor("NmlAtk5C") == "5C");
+	CHECK(plain.NotationFor("NmlAtk3C") == "3C");
+	CHECK(plain.NotationFor("NmlAtkAIR5C") == "j.5C");
+	CHECK(plain.NotationFor("NmlAtkAIR2C") == "j.2C");
+	CHECK(plain.NotationFor("NmlAtk5D_2nd") == "5D (2nd)");
+	CHECK(plain.NotationFor("NmlAtkThrow") == "B+C");
+	CHECK(plain.NotationFor("NmlAtkBackThrow") == "4B+C");
+	CHECK(plain.NotationFor("NmlAtkAirThrow") == "j.B+C");
+	CHECK(plain.NotationFor("NmlAtkGuardCrush") == "A+B");
+	CHECK(plain.NotationFor("NmlAtkDeadAngle") == "6A+B");
+	CHECK(plain.NotationFor("NmlAtkExcite") == "EA");
+	CHECK(plain.NotationFor("nmlatk2a") == "2A"); // spelled as the script spells it
+	// Specials and other states: never a guessed input, the state name itself.
+	CHECK(plain.NotationFor("Skill1") == "Skill1");
+	CHECK(plain.NotationFor("GauntletHades") == "GauntletHades");
+	CHECK(plain.NotationFor("ThrowExe") == "ThrowExe");
+	CHECK(plain.NotationFor("CmnActFDash") == "CmnActFDash");
+
+	// The moves file's notation, as written; the first line naming a state wins.
+	const MoveTable mapped = TestTable("236D = Skill1\n214D=Skill2/Skill1Exe\nj.236D = Skill1\n");
+	CHECK(mapped.NotationFor("Skill1") == "236D");
+	CHECK(mapped.NotationFor("Skill2") == "214D");
+	CHECK(mapped.NotationFor("Skill1Exe") == "214D");
+	CHECK(mapped.NotationFor("GauntletHades") == "GauntletHades");
+
+	// A moves-file line that takes a normal's notation over: the normal falls back to its
+	// state name rather than to text that now means Skill1.
+	const MoveTable taken = TestTable("2C = Skill1\n");
+	CHECK(taken.NotationFor("NmlAtk2C") == "NmlAtk2C");
+	CHECK(taken.NotationFor("Skill1") == "2C");
+
+	// Every state of every table round-trips.
+	const MoveTable* tables[] = { &plain, &mapped, &taken };
+	for (const MoveTable* t : tables)
+	{
+		for (const std::string& state : t->States())
+		{
+			const bool ok = RoundTrips(*t, state);
+			if (!ok)
+				std::printf("  no round trip: %s -> %s\n", state.c_str(), t->NotationFor(state).c_str());
+			CHECK(ok);
+		}
+	}
+
+	// Without a state list, normals and universal moves still round-trip; a special's name
+	// cannot (nothing says it is a state), which RecordedComboText covers with a match key.
+	MoveTable empty;
+	CHECK(RoundTrips(empty, "NmlAtk5C") && RoundTrips(empty, "NmlAtkAIR5C") && RoundTrips(empty, "NmlAtkThrow"));
+	CHECK(!empty.ResolvesExactlyTo(empty.NotationFor("Assault_A"), "Assault_A"));
+}
+
+// Parses copied text and checks it is one combo whose every step resolves Exact to the
+// expected state, and nothing else.
+static bool PastesAs(const std::string& text, const MoveTable& t, const std::vector<std::string>& states)
+{
+	std::vector<ComboFileIssue> issues;
+	const std::vector<Combo> combos = Parse(text, &issues);
+	if (combos.size() != 1 || !issues.empty() || combos[0].steps.size() != states.size())
+		return false;
+	for (size_t i = 0; i < states.size(); ++i)
+	{
+		const ComboStep& step = combos[0].steps[i];
+		if (!IsExact(R(t, step.notation, step.matchKey), states[i]))
+			return false;
+	}
+	return true;
+}
+
+// A Kokonoe-like character for the reported case. CmnActStand comes between the throw and
+// 5D (StandDrive) as it does after a throw. Assault_A is not a cancel target, so out of
+// StandDrive it is a continuation unless something names it.
+static MoveTable ReportTable(const std::string& movesFile = "")
+{
+	MoveTable t;
+	t.SetStates({
+		"CmnActStand", "NmlAtk5A", "NmlAtk5B", "NmlAtk5C", "NmlAtk2C", "NmlAtk6A", "NmlAtk6B", "NmlAtk3C",
+		"NmlAtkThrow", "ThrowExe", "StandDrive", "Assault_A",
+	}, { "NmlAtk6B", "NmlAtk5C", "NmlAtk3C" });
+	if (!movesFile.empty())
+		t.SetUserMappings(movesFile);
+	return t;
+}
+
+// The combo from the report: throw, 5D cancelled into 236A, then 6B > 5C > 3C > 236A loops.
+static void PlayReportedCombo(Sim& s)
+{
+	s.Move("NmlAtkThrow"); s.Move("ThrowExe"); s.Hit(); s.Hit(); s.Hit();
+	s.Move("CmnActStand"); s.Move("StandDrive"); s.Hit(); s.Move("Assault_A"); s.Hit();
+	for (int loop = 0; loop < 3; ++loop)
+	{
+		s.Move("NmlAtk6B"); s.Hit(); s.Hit();
+		s.Move("NmlAtk5C"); s.Hit();
+		s.Move("NmlAtk3C"); s.Hit();
+		if (loop < 2)
+		{
+			s.Move("Assault_A"); s.Hit(); s.Hit();
+		}
+	}
+}
+
+static void RecordingTests()
+{
+	{ // the report: the starter combo selected, a different combo done
+		const MoveTable table = ReportTable();
+		Sim s(table, "combo: starter\n5A > 5B > 5C > 2C > 6A\n");
+		PlayReportedCombo(s);
+		CHECK(s.State() == ComboRunState::OffRoute);
+
+		// The hits are the ones the window listed: 13 credited moves, the throw's and 6B's
+		// later hits, and the hit in Assault_A credited to StandDrive.
+		std::string listed;
+		for (const ComboHit& hit : s.t.Hits())
+			listed += (hit.newMove ? " " + hit.move : " +" + hit.state);
+		CHECK(listed == " NmlAtkThrow +ThrowExe +ThrowExe StandDrive +Assault_A"
+			" NmlAtk6B +NmlAtk6B NmlAtk5C NmlAtk3C Assault_A +Assault_A"
+			" NmlAtk6B +NmlAtk6B NmlAtk5C NmlAtk3C Assault_A +Assault_A"
+			" NmlAtk6B +NmlAtk6B NmlAtk5C NmlAtk3C");
+
+		// Off route, so no moves file lines: pairing "5A" with the throw was the bug.
+		CHECK(ComboRecording::MovesFileLines(Parse("combo: starter\n5A > 5B > 5C > 2C > 6A\n")[0],
+			s.steps, s.t.Hits(), s.State()).empty());
+
+		// The copy: the whole combo, the hit in Assault_A after StandDrive as its own step.
+		const std::string text = ComboRecording::RecordedComboText(s.t.Hits(), table);
+		std::printf("  report, no moves file:\n%s", text.c_str());
+		CHECK(text == "combo: Recorded\n"
+			"B+C > StandDrive > Assault_A > 6B > 5C > 3C > Assault_A > 6B > 5C > 3C > Assault_A > 6B > 5C > 3C\n");
+		CHECK(PastesAs(text, table, { "NmlAtkThrow", "StandDrive", "Assault_A", "NmlAtk6B", "NmlAtk5C", "NmlAtk3C",
+			"Assault_A", "NmlAtk6B", "NmlAtk5C", "NmlAtk3C", "Assault_A", "NmlAtk6B", "NmlAtk5C", "NmlAtk3C" }));
+
+		// Pasted in and done again, it tracks to the end.
+		Sim again(table, text);
+		PlayReportedCombo(again);
+		CHECK(again.State() == ComboRunState::Completed);
+
+		// Why the extra step: one step per credited move only would go off route on its own
+		// combo, because naming Assault_A makes it a move of its own after StandDrive.
+		Sim strict(table, "combo: x\nB+C > StandDrive > 6B > 5C > 3C > Assault_A > 6B > 5C > 3C > Assault_A > 6B > 5C > 3C\n");
+		PlayReportedCombo(strict);
+		CHECK(strict.State() == ComboRunState::OffRoute && strict.t.OffRouteMove() == "Assault_A");
+	}
+	{ // the same with 236A mapped in the moves file
+		const MoveTable table = ReportTable("236A = Assault_A\n");
+		Sim s(table, "combo: starter\n5A > 5B > 5C > 2C > 6A\n");
+		PlayReportedCombo(s);
+		const std::string text = ComboRecording::RecordedComboText(s.t.Hits(), table);
+		std::printf("  report, 236A = Assault_A:\n%s", text.c_str());
+		CHECK(text == "combo: Recorded\n"
+			"B+C > StandDrive > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C\n");
+		Sim again(table, text);
+		PlayReportedCombo(again);
+		CHECK(again.State() == ComboRunState::Completed);
+	}
+	{ // no state list: a special is written with itself as the match key, still exact
+		MoveTable empty;
+		const std::vector<ComboHit> hits = { { "NmlAtk5C", "NmlAtk5C", true }, { "Assault_A", "Assault_A", true } };
+		const std::string text = ComboRecording::RecordedComboText(hits, empty);
+		CHECK(text == "combo: Recorded\n5C > Assault_A | Assault_A\n");
+		CHECK(PastesAs(text, empty, { "NmlAtk5C", "Assault_A" }));
+	}
+	{ // a state named like a movement word would auto-pass; the match key keeps it exact
+		MoveTable t;
+		t.SetStates({ "CmnActStand", "NmlAtk5C", "Land" }, {});
+		const std::vector<ComboHit> hits = { { "NmlAtk5C", "NmlAtk5C", true }, { "Land", "Land", true } };
+		const std::string text = ComboRecording::RecordedComboText(hits, t);
+		CHECK(text == "combo: Recorded\n5C > Land | Land\n");
+		CHECK(PastesAs(text, t, { "NmlAtk5C", "Land" }));
+	}
+	{ // a move superseded before its first hit: the hit goes to the named state it moved into
+		const std::vector<ComboHit> hits = {
+			{ "Skill1", "Skill1", true },
+			{ "NmlAtk5C", "Skill1", true }, // 5C, then Skill1 again before the hit
+		};
+		const std::vector<std::string> moves = ComboRecording::RecordedMoves(hits);
+		CHECK(moves.size() == 2 && moves[0] == "Skill1" && moves[1] == "Skill1");
+	}
+	{ // nothing credited: nothing to copy
+		const std::vector<ComboHit> hits = { { "CmnActStand", "CmnActStand", false } };
+		CHECK(ComboRecording::RecordedComboText(hits, TestTable()).empty());
+		CHECK(ComboRecording::RecordedComboText({}, TestTable()).empty());
+	}
+	{ // moves file lines: a completed combo pairs its unmapped steps with what ticked them
+		const std::string text = "combo: a\n5C > 236D > jc > j.5C > 214D > 236D\n";
+		Sim s(text);
+		s.Move("NmlAtk5C"); s.Hit(); s.Move("Skill1"); s.Hit(); s.Move("CmnActJumpUpper");
+		s.Move("NmlAtkAIR5C"); s.Hit(); s.Move("Skill2"); s.Hit(); s.Move("CmnActStand"); s.Move("Skill1"); s.Hit();
+		CHECK(s.State() == ComboRunState::Completed);
+		const Combo combo = Parse(text)[0];
+		CHECK(ComboRecording::MovesFileLines(combo, s.steps, s.t.Hits(), s.State())
+			== "236D = Skill1\n214D = Skill2\n");
+	}
+	{ // ...nothing when every step is already exact, or the attempt was not completed
+		const std::string text = "combo: a\n5C > 236D\n";
+		Sim done("combo: a\n5B > 5C\n");
+		done.Move("NmlAtk5B"); done.Hit(); done.Move("NmlAtk5C"); done.Hit();
+		CHECK(done.State() == ComboRunState::Completed);
+		CHECK(ComboRecording::MovesFileLines(Parse("combo: a\n5B > 5C\n")[0], done.steps, done.t.Hits(), done.State()).empty());
+		Sim dropped(text);
+		dropped.Move("NmlAtk5C"); dropped.Hit(); dropped.Drop();
+		CHECK(ComboRecording::MovesFileLines(Parse(text)[0], dropped.steps, dropped.t.Hits(), dropped.State()).empty());
+	}
+}
+
 int main()
 {
 	ParserTests();
 	MoveTableTests();
 	TrackerTests();
+	NotationTests();
+	RecordingTests();
 	if (g_failures == 0)
 		std::printf("All combo list tests passed.\n");
 	return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

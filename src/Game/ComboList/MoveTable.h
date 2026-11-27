@@ -69,6 +69,21 @@ public:
 
 	static std::string Normalize(const std::string& text);
 
+	// The reverse of Resolve: what to write in a combo file so the step ticks off on `state`.
+	// In order of preference: the moves file's notation for it ("236A" for "236A = Assault_A",
+	// first line wins), a universal move's alias (B+C, 4B+C, j.B+C, A+B, 6A+B, EA), a normal's
+	// numbered notation (5C, j.5C, 5D (2nd)), and otherwise the state name itself. Inputs for
+	// a special are never guessed: only the moves file knows them.
+	// Every candidate is checked with ResolvesExactlyTo, so a moves-file line that takes over
+	// "2C" (say) makes NmlAtk2C come out as "NmlAtk2C" rather than as text that resolves to
+	// something else. Only if even the state name fails (no state list, or a state named like
+	// a movement word) is it returned anyway; callers can check with ResolvesExactlyTo.
+	std::string NotationFor(const std::string& state) const;
+
+	// True when `notation`, written as a combo step with no match key, resolves Exact with
+	// `state` among its keys, and is safe to put between '>' separators.
+	bool ResolvesExactlyTo(const std::string& notation, const std::string& state) const;
+
 	// How a state is shown: ScrStateNames' display form, except that air normals keep their
 	// direction number (NmlAtkAIR5C -> "j.5C", where ScrStateNames says "j.C").
 	static std::string DisplayName(const std::string& state);
@@ -83,6 +98,9 @@ private:
 	// Normalized notation -> state names, from the moves file.
 	std::map<std::string, std::vector<std::string>> m_user;
 	std::set<std::string> m_userStates;    // lower-cased
+	// Lower-cased state -> the notation of the first moves-file line naming it, as written.
+	// m_user only keeps the normalized form ("236a"), which is not what a player would type.
+	std::map<std::string, std::string> m_userNotation;
 
 	std::vector<std::string> KeysFor(const std::string& text, bool& outFound) const;
 	std::string Canonical(const std::string& name) const;

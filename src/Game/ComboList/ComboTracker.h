@@ -20,6 +20,7 @@
 //                   the combo starts, if it comes first). Never the next step, not counted.
 // - A landed move that does not match ends the attempt as "off route" until the next combo.
 
+#include "ComboParser.h"
 #include "MoveTable.h"
 
 #include <string>
@@ -100,3 +101,36 @@ private:
 	std::string m_move;          // the last move started
 	bool m_moveCredited = true;  // it has already been credited with a hit
 };
+
+// Turning a recorded combo (ComboTracker::Hits) back into combo-file text. Plain C++ like the
+// rest, so the window only has to put the result on the clipboard.
+namespace ComboRecording
+{
+	// The state each step of the recorded combo should name, in order: one per credited move,
+	// plus one for a later hit that landed after the attacker moved into a state that is
+	// credited elsewhere in the same combo. That second kind matters because the copied combo
+	// names every one of those states, and a state a step names always starts a move
+	// (MoveTable::IsMoveStart). Example: 5D (StandDrive) cancelled into 236A (Assault_A) is
+	// one move while no step names Assault_A, so its hit is recorded as StandDrive's second
+	// hit; but once Assault_A is credited after a 3C later in the combo, the copy names it,
+	// and doing the combo again would credit Assault_A after StandDrive as a move of its own.
+	// Without its own step there the copy would go off route on the combo it came from.
+	// Not visible in the hits, so not covered: a named state entered and left with no hit
+	// landing in it, or re-entered between two hits in it.
+	std::vector<std::string> RecordedMoves(const std::vector<ComboHit>& hits);
+
+	// "combo: Recorded" and one line of steps, ready to paste into the combo file; empty when
+	// no move was credited. Each step is MoveTable::NotationFor; in the rare case that cannot
+	// be resolved back exactly (no state list), the step carries the state as its match key
+	// ("Assault_A | Assault_A") so it still only accepts that state.
+	std::string RecordedComboText(const std::vector<ComboHit>& hits, const MoveTable& table);
+
+	// "notation = StateName" lines for the moves file: each step of `combo` that is not
+	// checked exactly yet, paired with the move that ticked it off. Only for a completed
+	// attempt, where the tracker itself matched every step to a credited move in order;
+	// anything else (dropped, off route, a different combo done) would pair steps with moves
+	// that have nothing to do with them, so the result is empty. Duplicate lines are dropped.
+	// `resolved` is `combo`'s steps resolved, as the tracker was given them.
+	std::string MovesFileLines(const Combo& combo, const std::vector<ResolvedStep>& resolved,
+		const std::vector<ComboHit>& hits, ComboRunState runState);
+}

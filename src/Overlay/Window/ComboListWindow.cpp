@@ -258,7 +258,7 @@ void ComboListWindow::DrawBody()
 	ImGui::Separator();
 	DrawTextSize();
 	ImGui::Checkbox("Show move names", &m_showMoveNames);
-	ImGui::ShowHelpMarkerSameLine("Shows the game's name for the move each hit was credited to. Use it to fill in the moves file for specials.");
+	ImGui::ShowHelpMarkerSameLine("Lists the moves of the last combo with the game's name for each, and lets you copy that combo into the combo file.");
 	if (m_showMoveNames)
 		DrawMoveNames(combo);
 }
@@ -556,32 +556,23 @@ void ComboListWindow::DrawMoveNames(const Combo& combo)
 			ImGui::TextDisabled("     + hit in %s", hit.state.c_str());
 	}
 
-	if (ImGui::Button("Copy moves file lines"))
+	if (moveNumber > 0) // at least one move credited, so there is a step to copy
 	{
-		// Pair the credited moves with this combo's hitting steps, in order. Only steps that
-		// are not checked exactly yet need a line; if there are none, copy every pair.
-		std::vector<std::string> moves;
-		for (const ComboHit& hit : hits)
-		{
-			if (hit.newMove)
-				moves.push_back(hit.move);
-		}
-
-		std::string needed;
-		std::string all;
-		size_t move = 0;
-		for (size_t i = 0; i < m_resolved.size() && i < combo.steps.size() && move < moves.size(); ++i)
-		{
-			if (m_resolved[i].match == StepMatch::AutoPass)
-				continue;
-			const std::string line = combo.steps[i].notation + " = " + moves[move++] + "\n";
-			all += line;
-			if (m_resolved[i].match != StepMatch::Exact)
-				needed += line;
-		}
-		ImGui::SetClipboardText((needed.empty() ? all : needed).c_str());
+		if (ImGui::Button("Copy combo"))
+			ImGui::SetClipboardText(ComboRecording::RecordedComboText(hits, m_moves).c_str());
+		ImGui::ShowHelpMarkerSameLine("Copies the combo you just did as a \"combo: Recorded\" entry. Paste it into the combo file and rename it. Normals and throws are written as notation, specials as the moves file names them, or as their state name if it does not.");
 	}
-	ImGui::ShowHelpMarkerSameLine("Copies \"notation = StateName\" lines for this combo's unmapped steps, pairing steps and landed moves in order. Paste them into the moves file after checking the pairs.");
+
+	// Only once the selected combo was completed: then the tracker itself paired each step
+	// with the move that ticked it off. After any other combo, pairing by position would be
+	// guesswork (a throw "= 5A").
+	const std::string movesLines = ComboRecording::MovesFileLines(combo, m_resolved, hits, m_tracker.RunState());
+	if (!movesLines.empty())
+	{
+		if (ImGui::Button("Copy moves file lines"))
+			ImGui::SetClipboardText(movesLines.c_str());
+		ImGui::ShowHelpMarkerSameLine("This combo was completed with steps that are not mapped yet. Copies a \"notation = StateName\" line for each, naming the move that ticked it off. Paste them into the moves file.");
+	}
 }
 
 void ComboListWindow::DrawTextSize()

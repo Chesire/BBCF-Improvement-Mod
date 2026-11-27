@@ -1,6 +1,7 @@
 #include "ComboTracker.h"
 
 #include <cctype>
+#include <set>
 
 namespace
 {
@@ -14,6 +15,13 @@ namespace
 				return false;
 		}
 		return true;
+	}
+
+	std::string Lower(std::string s)
+	{
+		for (char& c : s)
+			c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		return s;
 	}
 
 	bool IsAutoPass(const ResolvedStep& step)
@@ -179,4 +187,85 @@ void ComboTracker::OnFrame(const ComboTrackerFrame& frame, const std::vector<Res
 	}
 
 	m_lastHitCount = hits;
+}
+
+std::vector<std::string> ComboRecording::RecordedMoves(const std::vector<ComboHit>& hits)
+{
+	// Every state credited as a move will be named by a step of the copy, so entering any of
+	// them starts a move when the copy is tracked.
+	std::set<std::string> named;
+	for (const ComboHit& hit : hits)
+	{
+		if (hit.newMove)
+			named.insert(Lower(hit.move));
+	}
+
+	std::vector<std::string> moves;
+	for (size_t i = 0; i < hits.size(); ++i)
+	{
+		const ComboHit& hit = hits[i];
+		const bool inNamedState = named.count(Lower(hit.state)) > 0;
+		if (hit.newMove)
+		{
+			// The move started, then the attacker moved on into a named state before the hit
+			// landed: tracking the copy, that state is the move the hit goes to.
+			const bool movedOn = !EqualsIgnoreCase(hit.state, hit.move) && inNamedState;
+			moves.push_back(movedOn ? hit.state : hit.move);
+		}
+		else if (i > 0 && inNamedState && !EqualsIgnoreCase(hit.state, hits[i - 1].state))
+		{
+			// A later hit after moving into a named state: a move of its own for the copy. The
+			// same state as the hit before is a multi-hit move, not a new one. A first hit
+			// that credited nothing stays that way: no move was started for it.
+			moves.push_back(hit.state);
+		}
+	}
+	return moves;
+}
+
+std::string ComboRecording::RecordedComboText(const std::vector<ComboHit>& hits, const MoveTable& table)
+{
+	std::string steps;
+	for (const std::string& state : RecordedMoves(hits))
+	{
+		std::string step = table.NotationFor(state);
+		if (!table.ResolvesExactlyTo(step, state))
+			step = state + " | " + state;
+		steps += (steps.empty() ? "" : " > ") + step;
+	}
+	if (steps.empty())
+		return std::string();
+	return "combo: Recorded\n" + steps + "\n";
+}
+
+std::string ComboRecording::MovesFileLines(const Combo& combo, const std::vector<ResolvedStep>& resolved,
+	const std::vector<ComboHit>& hits, ComboRunState runState)
+{
+	if (runState != ComboRunState::Completed || combo.steps.size() != resolved.size())
+		return std::string();
+
+	// The tracker credited moves to the steps in this same order (CreditMove), skipping
+	// movement, until the last step landed; any credits after that are extra hits.
+	std::vector<std::string> moves;
+	for (const ComboHit& hit : hits)
+	{
+		if (hit.newMove)
+			moves.push_back(hit.move);
+	}
+
+	std::string out;
+	std::set<std::string> seen;
+	size_t move = 0;
+	for (size_t i = 0; i < resolved.size() && move < moves.size(); ++i)
+	{
+		if (IsAutoPass(resolved[i]))
+			continue;
+		const std::string& landed = moves[move++];
+		if (resolved[i].match == StepMatch::Exact)
+			continue; // already checked exactly; nothing to map
+		const std::string line = combo.steps[i].notation + " = " + landed + "\n";
+		if (seen.insert(line).second)
+			out += line;
+	}
+	return out;
 }
