@@ -38,11 +38,14 @@ jobs:
           }
           Write-Host "Installing ATL into $vsPath"
           $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          $args = @('modify', '--installPath', "`"$vsPath`"", '--add', 'Microsoft.VisualStudio.Component.VC.ATL', '--quiet', '--norestart', '--nocache')
-          $p = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+          $installArgs = @('modify', '--installPath', "`"$vsPath`"", '--add', 'Microsoft.VisualStudio.Component.VC.ATL', '--quiet', '--norestart', '--nocache')
+          $p = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
           if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "vs_installer exited with $($p.ExitCode)" }
 
+      # cmd, not the default pwsh: the build's PowerShell 5.1 scripts would otherwise inherit
+      # PowerShell 7's PSModulePath and fail to load built-ins such as Get-FileHash.
       - name: Build (Release|Win32)
+        shell: cmd
         run: msbuild BBCF_IM.sln /m /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v143 /v:minimal /nologo
 
       # Only present once the combo list code is merged; skipped until then.
