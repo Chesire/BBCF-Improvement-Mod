@@ -42,6 +42,8 @@ struct ResolvedStep
 	// Exact, but the game's script registers that move under several inputs (Kokonoe's 5D and
 	// 6D are both StandDrive), so which of them was done cannot be told from the state.
 	bool directionUnchecked = false;
+	// "3C(1)": the move must land exactly this many hits before the next move (0 = any number).
+	int hitLimit = 0;
 };
 
 // A move as the character's script registers it (scrMoveRegistration, without the game types).
@@ -86,6 +88,10 @@ public:
 	const std::vector<std::string>& States() const { return m_stateList; }
 
 	// ComboStep::notation / ComboStep::matchKey in, resolved step out.
+	// Besides the notation itself, a step may be written as:
+	//   [Bomb]   whole step in square brackets: optional, shown but never checked (AutoPass)
+	//   dl.5C    a delay before the move: shown, but only the move is checked
+	//   3C(1)    the move must land exactly that many hits (here: cancelled after the first)
 	ResolvedStep Resolve(const std::string& notation, const std::string& matchKey) const;
 
 	// For the tracker: is entering `state` (after `previous`) the start of a new move, as
@@ -140,5 +146,6 @@ private:
 	std::map<std::string, std::string> m_userNotation;
 
 	std::vector<std::string> KeysFor(const std::string& text, bool& outFound) const;
+	ResolvedStep ResolveCore(const std::string& notation, const std::string& matchKey) const;
 	std::string Canonical(const std::string& name) const;
 };

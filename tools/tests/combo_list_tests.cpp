@@ -51,6 +51,9 @@ static void ParserTests()
 
 	CHECK(Parse("").empty());
 	CHECK(Parse("combo: z\n5A").size() == 1);
+	c = Parse("combo: z\n5B > [Bomb] > dl. 5C > 3C(1)\n", &issues);
+	CHECK(c.size() == 1 && c[0].steps.size() == 4);
+	CHECK(c[0].steps[1].notation == "[Bomb]" && c[0].steps[2].notation == "dl. 5C" && c[0].steps[3].notation == "3C(1)");
 }
 
 // A made-up character whose state names follow the real script's patterns: NmlAtk* normals
@@ -114,6 +117,32 @@ static void MoveTableTests()
 	CHECK(MoveTable::DisplayName("NmlAtk5C") == "5C");
 	CHECK(MoveTable::DisplayName("NmlAtkAirThrow") == "Air Throw");
 	CHECK(R(t, "B+C").display == "B+C"); // aliases keep what was written
+
+	// Brackets, delays and hit counts.
+	const ResolvedStep bomb = R(t, "[Bomb]");
+	CHECK(bomb.match == StepMatch::AutoPass && bomb.display == "[Bomb]");
+	CHECK(R(t, "[6D]").match == StepMatch::AutoPass);
+	CHECK(R(t, "[4]6D").match == StepMatch::AnySpecial); // charge notation is not an optional step
+	CHECK(R(t, "[Bomb]", "NmlAtk5B").match == StepMatch::Exact); // an explicit key wins
+	const ResolvedStep dl = R(t, "dl.5C");
+	CHECK(IsExact(dl, "NmlAtk5C") && dl.display == "dl.5C" && dl.hitLimit == 0);
+	CHECK(IsExact(R(t, "dl. 5C"), "NmlAtk5C") && R(t, "dl. 5C").display == "dl. 5C");
+	CHECK(IsExact(R(t, "DL.5c"), "NmlAtk5C"));
+	CHECK(IsExact(R(t, "delay 2C"), "NmlAtk2C"));
+	CHECK(IsExact(R(t, "dl.j.5C"), "NmlAtkAIR5C"));
+	CHECK(R(t, "dl.NmlAtk2A").display == "dl.2A");
+	CHECK(R(t, "dl.").match == StepMatch::AutoPass && R(t, "dl").match == StepMatch::AutoPass);
+	const ResolvedStep one = R(t, "3C(1)");
+	CHECK(IsExact(one, "NmlAtk3C") && one.hitLimit == 1 && one.display == "3C(1)");
+	CHECK(R(t, "3C (2)").hitLimit == 2 && IsExact(R(t, "3C (2)"), "NmlAtk3C"));
+	CHECK(R(t, "NmlAtk3C(1)").display == "3C(1)");
+	const ResolvedStep both = R(t, "dl.3C(1)");
+	CHECK(IsExact(both, "NmlAtk3C") && both.hitLimit == 1 && both.display == "dl.3C(1)");
+	const ResolvedStep second = R(t, "5D (2nd)");
+	CHECK(IsExact(second, "NmlAtk5D_2nd") && second.hitLimit == 0);
+	CHECK(R(t, "3C(0)").hitLimit == 0);
+	CHECK(R(t, "jc(1)").hitLimit == 0); // nothing to count on a step that is never checked
+	CHECK(R(t, "236A(1)").match == StepMatch::AnySpecial && R(t, "236A(1)").hitLimit == 1);
 
 	// The moves file.
 	CHECK(IsExact(R(t, "236D"), "Skill1"));
@@ -324,6 +353,48 @@ static void TrackerTests()
 		fr.frameCount = s.f - 1;
 		s.t.OnFrame(fr, s.steps, s.table);
 		CHECK(s.State() == ComboRunState::Idle);
+	}
+	{ // 3C(1): one hit then the next move passes...
+		Sim s("combo: a\n5C > 3C(1) > 2C\n");
+		s.Move("NmlAtk5C"); s.Hit(); s.Move("NmlAtk3C"); s.Hit();
+		CHECK(s.t.StepState(1) == ComboStepState::Landed && s.t.NextStep() == 2);
+		s.Move("NmlAtk2C"); s.Hit();
+		CHECK(s.State() == ComboRunState::Completed);
+	}
+	{ // ...a second hit of it goes off route...
+		Sim s("combo: a\n5C > 3C(1) > 2C\n");
+		s.Move("NmlAtk5C"); s.Hit(); s.Move("NmlAtk3C"); s.Hit(); s.Hit();
+		CHECK(s.State() == ComboRunState::OffRoute && s.t.StepState(1) == ComboStepState::Missed);
+		CHECK(s.t.OffRouteMove() == "NmlAtk3C" && s.t.OffRouteHits() == 2);
+	}
+	{ // ...and without the (1) both hits are fine
+		Sim s("combo: a\n5C > 3C > 2C\n");
+		s.Move("NmlAtk5C"); s.Hit(); s.Move("NmlAtk3C"); s.Hit(); s.Hit(); s.Move("NmlAtk2C"); s.Hit();
+		CHECK(s.State() == ComboRunState::Completed && s.t.OffRouteHits() == 0);
+	}
+	{ // a limit on the last step still applies after the combo is complete
+		Sim s("combo: a\n5C > 3C(1)\n");
+		s.Move("NmlAtk5C"); s.Hit(); s.Move("NmlAtk3C"); s.Hit();
+		CHECK(s.State() == ComboRunState::Completed);
+		s.Hit();
+		CHECK(s.State() == ComboRunState::OffRoute && s.t.StepState(1) == ComboStepState::Missed);
+	}
+	{ // 3C(2) wants both hits; the limit counts the move, not hits of earlier moves
+		Sim s("combo: a\n5C > 3C(2) > 2C\n");
+		s.Move("NmlAtk5C"); s.Hit(); s.Hit(); s.Move("NmlAtk3C"); s.Hit(); s.Hit(); s.Move("NmlAtk2C"); s.Hit();
+		CHECK(s.State() == ComboRunState::Completed);
+	}
+	{ // [text] and dl. in a run: brackets pass by themselves, dl.2C needs the 2C
+		Sim s("combo: a\n5B > [Bomb] > dl.2C\n");
+		s.Move("NmlAtk5B"); s.Hit();
+		CHECK(s.t.StepState(1) == ComboStepState::Landed && s.t.NextStep() == 2);
+		s.Move("NmlAtk5C"); s.Hit();
+		CHECK(s.State() == ComboRunState::OffRoute);
+	}
+	{
+		Sim s("combo: a\n5B > [Bomb] > dl.2C\n");
+		s.Move("NmlAtk5B"); s.Hit(); s.Move("NmlAtk2C"); s.Hit();
+		CHECK(s.State() == ComboRunState::Completed);
 	}
 }
 

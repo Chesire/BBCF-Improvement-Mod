@@ -81,9 +81,12 @@ namespace
 			ImGui::Text("Not understood: any move ticks it off.");
 			break;
 		case StepMatch::AutoPass:
-			ImGui::Text("Movement: not checked. Passes when the step before it lands.");
+			ImGui::Text("Optional: not checked. Passes when the step before it lands.");
 			break;
 		}
+		if (step.hitLimit > 0)
+			ImGui::Text("Must land exactly %d hit%s, then the next move: another hit of it goes off route.",
+				step.hitLimit, step.hitLimit == 1 ? "" : "s");
 		ImGui::EndTooltip();
 	}
 }
@@ -326,7 +329,11 @@ void ComboListWindow::DrawStatus()
 		ImGui::TextColored(kMissedColor, "Dropped at %d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
 		break;
 	case ComboRunState::OffRoute:
-		ImGui::TextColored(kMissedColor, "Off route: %s landed", Describe(m_tracker.OffRouteMove(), m_moves).c_str());
+		if (m_tracker.OffRouteHits() > 0)
+			ImGui::TextColored(kMissedColor, "Off route: %s landed %d hits", Describe(m_tracker.OffRouteMove(), m_moves).c_str(),
+				m_tracker.OffRouteHits());
+		else
+			ImGui::TextColored(kMissedColor, "Off route: %s landed", Describe(m_tracker.OffRouteMove(), m_moves).c_str());
 		break;
 	}
 }

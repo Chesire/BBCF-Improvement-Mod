@@ -518,6 +518,64 @@ std::vector<std::string> MoveTable::KeysFor(const std::string& text, bool& outFo
 
 ResolvedStep MoveTable::Resolve(const std::string& notation, const std::string& matchKey) const
 {
+	const std::string written = Trim(notation);
+
+	// [Bomb]: a whole step in square brackets is optional text. Only the whole step: "[4]6D"
+	// (a charge input) does not end in ']', so it is still a move.
+	if (matchKey.empty() && written.size() >= 2 && written.front() == '[' && written.back() == ']')
+	{
+		ResolvedStep step;
+		step.display = written;
+		step.match = StepMatch::AutoPass;
+		return step;
+	}
+
+	// dl.5C / dl. 5C / delay 5C: the delay is for the reader; only the move is checked. "dl."
+	// on its own stays a movement step.
+	std::string core = written;
+	std::string prefix;
+	const std::string lower = Lower(written);
+	for (const char* p : { "delay ", "dl.", "dl " })
+	{
+		const std::string delay(p);
+		if (StartsWith(lower, delay) && !Trim(written.substr(delay.size())).empty())
+		{
+			prefix = written.substr(0, delay.size());
+			core = Trim(written.substr(delay.size()));
+			break;
+		}
+	}
+
+	// 3C(1): how many hits the move must land. Only a number counts, so "5D (2nd)" is still
+	// read as the move it names.
+	int hitLimit = 0;
+	std::string suffix;
+	const size_t open = core.rfind('(');
+	if (!core.empty() && core.back() == ')' && open != std::string::npos && open > 0)
+	{
+		const std::string inside = Trim(core.substr(open + 1, core.size() - open - 2));
+		bool digits = !inside.empty() && inside.size() <= 2;
+		for (char ch : inside)
+			digits = digits && ch >= '0' && ch <= '9';
+		if (digits && std::stoi(inside) > 0)
+		{
+			hitLimit = std::stoi(inside);
+			suffix = core.substr(open);
+			core = Trim(core.substr(0, open));
+		}
+	}
+
+	ResolvedStep step = ResolveCore(core, matchKey);
+	step.hitLimit = step.match == StepMatch::Exact || step.match == StepMatch::AnySpecial
+		|| step.match == StepMatch::AnyMove ? hitLimit : 0;
+	// Shown as written, except that a state name written as the move shows as the move
+	// ("dl.NmlAtk2A" -> "dl.2A").
+	step.display = step.display != core ? prefix + step.display + suffix : written;
+	return step;
+}
+
+ResolvedStep MoveTable::ResolveCore(const std::string& notation, const std::string& matchKey) const
+{
 	ResolvedStep step;
 	step.display = notation;
 

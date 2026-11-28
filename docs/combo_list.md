@@ -26,7 +26,7 @@ note: Shown under the combo name.
 6A > 236D
 
 combo: Corner route
-j.C > 5C > 2C > 5D
+j.5C > 5C > [6D] > dl.2C > 3C(1) > 236A
 ```
 
 - `combo: <name>` starts a new combo.
@@ -56,6 +56,9 @@ Steps are worked out from what you write; hover a step to see exactly what ticks
 | `A+B` (`CT`), `6A+B` (`CA`), `EA` | Crush Trigger, Counter Assault, Exceed Accel | |
 | `NmlAtk2A`, `ThrowExe`, any state name | that state | shown as the move: `NmlAtk2A` shows `2A` |
 | `jc`, `sjc`, `dash`, `land`, `dl.`, `66`, `OD`, ... | nothing, never checked | auto-pass: ticks itself once the step before it lands |
+| `[Bomb]`, `[6D]`, `[walk up]` (any text in square brackets) | nothing, never checked | optional, like movement; see below |
+| `dl.5C`, `dl. 5C`, `delay 5C` | what `5C` accepts | the delay is shown, not timed |
+| `3C(1)`, `3C (2)` | what `3C` accepts, landing exactly that many hits | another hit of the same move goes off route |
 | `236A`, `623C`, `236236D`, `5D` (a special's input) | the move the game registers with that input | from the game's move list; `j.236A` is the same |
 | `236D` with `236D = Skill1` in the moves file | that special only | the moves file always wins |
 | a special input the game's list does not name | any special, never a normal or throw | marked `?` |
@@ -70,11 +73,23 @@ have (a typo) is marked `!` and still only accepts that exact state, so nothing 
 
 ### Optional steps
 
-Put `| -` after a step to show it without checking it: `5B > 5C > 6D | - > 236A`. It passes
-as soon as the step before it lands (or when the combo starts, if it comes first), and does
-not count towards the n/m total. Use it for setups that do not hit, such as placing a summon,
-or for anything you do not want checked. Movement words (`jc`, `sjc`, `dash`, `land`, `dl.`)
-behave this way without the `| -`.
+Wrap a step in square brackets to show it without checking it: `5B > 5C > [6D] > 236A`.
+Anything inside works, so it doubles as a free-text note in the route: `[Bomb]`,
+`[walk up]`. It passes as soon as the step before it lands (or when the combo starts, if it
+comes first), and does not count towards the n/m total. Use it for setups that do not hit,
+such as placing a summon. Movement words (`jc`, `sjc`, `dash`, `land`, `dl.`) behave this
+way without brackets, and `6D | -` still works too. Only a whole step counts: charge
+notation such as `[4]6D` is still a move.
+
+### Delays and hit counts
+
+- `dl.5C` (also `dl. 5C`, `delay 5C`) shows the delay but only checks the 5C. The timing of
+  the delay is not checked. `dl.` on its own is still a movement word.
+- `3C(1)` means 3C has to land exactly one hit before the next move: if 3C hits a second
+  time, the step is marked missed and the combo goes off route ("3C landed 2 hits").
+  `3C(2)` wants two hits. Without the brackets, 3C just has to hit, however many times.
+  The count is of hits by that one move, so it works on the last step too. `(2nd)` is not
+  a hit count: `5D (2nd)` is still 5D's second part.
 
 ### Where specials get their input: the game's move list
 

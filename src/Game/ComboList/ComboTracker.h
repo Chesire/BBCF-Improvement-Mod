@@ -70,8 +70,10 @@ public:
 	ComboStepState StepState(size_t index) const;
 	size_t NextStep() const { return m_nextStep; }
 
-	// For OffRoute: the move that landed instead.
+	// For OffRoute: the move that landed instead, or (when OffRouteHits() > 0) the move that
+	// landed more hits than its step allows ("3C(1)" hit twice).
 	const std::string& OffRouteMove() const { return m_offRouteMove; }
+	int OffRouteHits() const { return m_offRouteHits; }
 
 	// Every hit of the current (or last) combo, in order.
 	const std::vector<ComboHit>& Hits() const { return m_hits; }
@@ -98,7 +100,10 @@ private:
 	int m_lastStateChanges = 0;
 	std::string m_lastState;
 
+	int m_offRouteHits = 0;
 	std::string m_move;          // the last move started
+	size_t m_moveStep = static_cast<size_t>(-1); // the step that move was credited to, if any
+	int m_moveHits = 0;          // hits that move has landed
 	bool m_moveCredited = true;  // it has already been credited with a hit
 };
 

@@ -69,6 +69,8 @@ void ComboTracker::Reset(size_t stepCount)
 	m_runState = ComboRunState::Idle;
 	m_nextStep = 0;
 	m_offRouteMove.clear();
+	m_offRouteHits = 0;
+	m_moveStep = static_cast<size_t>(-1);
 	m_hits.clear();
 	// Keep the last sample and the current move: forgetting them would make an in-flight
 	// combo look like a new one.
@@ -82,6 +84,8 @@ void ComboTracker::StartRun(const std::vector<ResolvedStep>& steps)
 	// Leading movement (a dash or jump before the first hit) passes as the combo starts.
 	PassAutoSteps(steps, m_steps, m_nextStep);
 	m_offRouteMove.clear();
+	m_offRouteHits = 0;
+	m_moveStep = static_cast<size_t>(-1);
 	m_hits.clear();
 }
 
@@ -123,6 +127,7 @@ void ComboTracker::CreditMove(const std::string& move, const std::vector<Resolve
 
 	// Movement steps are never checked: the ones after a landed step pass straight away.
 	m_steps[candidate] = ComboStepState::Landed;
+	m_moveStep = candidate;
 	m_nextStep = candidate + 1;
 	PassAutoSteps(steps, m_steps, m_nextStep);
 	if (m_nextStep >= steps.size())
@@ -159,6 +164,8 @@ void ComboTracker::OnFrame(const ComboTrackerFrame& frame, const std::vector<Res
 		{
 			m_move = frame.attackerAction;
 			m_moveCredited = false;
+			m_moveStep = static_cast<size_t>(-1);
+			m_moveHits = 0;
 		}
 		m_lastStateChanges = frame.attackerStateChanges;
 		m_lastState = frame.attackerAction;
@@ -182,7 +189,24 @@ void ComboTracker::OnFrame(const ComboTrackerFrame& frame, const std::vector<Res
 		if (newMove)
 		{
 			m_moveCredited = true;
+			m_moveHits = 1;
 			CreditMove(m_move, steps, table);
+		}
+		else
+		{
+			++m_moveHits;
+		}
+
+		// "3C(1)": the step's move landing more hits than it allows breaks the route, even
+		// if the combo was already complete (the extra hit is part of it).
+		if (m_moveStep < steps.size() && steps[m_moveStep].hitLimit > 0 && m_moveHits > steps[m_moveStep].hitLimit
+			&& (m_runState == ComboRunState::InProgress || m_runState == ComboRunState::Completed))
+		{
+			m_steps[m_moveStep] = ComboStepState::Missed;
+			m_offRouteMove = m_move;
+			m_offRouteHits = m_moveHits;
+			m_runState = ComboRunState::OffRoute;
+			m_moveStep = static_cast<size_t>(-1);
 		}
 	}
 
