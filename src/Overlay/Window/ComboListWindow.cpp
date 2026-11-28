@@ -1,22 +1,94 @@
 #include "ComboListWindow.h"
 
 #include "Core/interfaces.h"
+#include "Core/logger.h"
+#include "Core/utils.h"
 #include "Game/characters.h"
 #include "Game/gamestates.h"
+#include "Game/Scr/ScrStateNames.h"
+#include "Game/Scr/ScrStateReader.h"
 #include "Overlay/imgui_utils.h"
 
 #include <imgui.h>
 
+#include <cstring>
+#include <set>
+
 namespace
 {
-	// How often to check the combo file for edits. Half a second is quick enough to feel
-	// live while editing, and one file stat per 30 frames costs nothing.
+	// How often to check the files for edits. Half a second is quick enough to feel live while
+	// editing, and two file stats per 30 frames cost nothing.
 	const int kPollIntervalFrames = 30;
 
 	const float kWrapWidth = 340.0f;
 
 	const ImVec4 kWarningColor(1.0f, 0.8f, 0.3f, 1.0f);
 	const ImVec4 kStepNumberColor(0.6f, 0.6f, 0.6f, 1.0f);
+	const ImVec4 kLandedColor(0.35f, 0.9f, 0.4f, 1.0f);
+	const ImVec4 kMissedColor(1.0f, 0.4f, 0.35f, 1.0f);
+	const ImVec4 kNextStepColor(1.0f, 0.85f, 0.3f, 1.0f);
+
+	std::string StateOf(const CharData* data)
+	{
+		// Bounded copy: the game's buffer is fixed-size and not guaranteed to be terminated.
+		return std::string(data->currentAction, strnlen(data->currentAction, sizeof(data->currentAction)));
+	}
+
+	// "236A (Assault_A)", "2A (NmlAtk2A)", or just the name when nothing better is known.
+	std::string Describe(const std::string& state, const MoveTable& table)
+	{
+		const std::string notation = table.NotationFor(state);
+		if (notation != state)
+			return notation + " (" + state + ")";
+		const std::string display = MoveTable::DisplayName(state);
+		return display == state ? state : display + " (" + state + ")";
+	}
+
+	const char* MatchSuffix(const ResolvedStep& step)
+	{
+		if (step.match == StepMatch::Exact && step.notInMoveList)
+			return " !";
+		if (step.match == StepMatch::AnySpecial || step.match == StepMatch::AnyMove)
+			return " ?";
+		return "";
+	}
+
+	void StepTooltip(const ResolvedStep& step)
+	{
+		if (!ImGui::IsItemHovered())
+			return;
+
+		ImGui::BeginTooltip();
+		switch (step.match)
+		{
+		case StepMatch::Exact:
+		{
+			std::string keys;
+			for (const std::string& key : step.keys)
+				keys += (keys.empty() ? "" : " or ") + key;
+			ImGui::Text("Ticked off by %s", keys.c_str());
+			if (step.notInMoveList)
+				ImGui::TextColored(kWarningColor, "This character has no such state. Typo?");
+			if (step.directionUnchecked)
+				ImGui::TextDisabled("The game starts this same move from several inputs (e.g. 5D and 6D),\nso which direction you held is not checked.");
+			break;
+		}
+		case StepMatch::AnySpecial:
+			ImGui::Text("Not mapped yet: any special ticks it off.");
+			ImGui::TextDisabled("Add it to the moves file to check it exactly.");
+			break;
+		case StepMatch::AnyMove:
+			ImGui::Text("Not understood: any move ticks it off.");
+			break;
+		case StepMatch::AutoPass:
+			ImGui::Text("Optional: not checked. Passes when the step before it lands.");
+			break;
+		}
+		if (step.hitLimit > 0)
+			ImGui::Text("Must land exactly %d hit%s, then the next move: another hit of it goes off route.",
+				step.hitLimit, step.hitLimit == 1 ? "" : "s");
+		ImGui::EndTooltip();
+	}
 }
 
 bool ComboListWindow::IsUsableNow()
@@ -62,6 +134,47 @@ int ComboListWindow::WatchedCharIndex() const
 	return isCharacterIndexOutOfBound(charIndex) ? -1 : charIndex;
 }
 
+void ComboListWindow::LoadMoveList()
+{
+	// The script is read once per character (and side): it is the list of every state the
+	// character has, plus the cancel lists that say which of them are moves of their own.
+	std::vector<std::string> names;
+	std::set<std::string> cancelTargets;
+	std::vector<RegisteredMove> registered;
+	m_specialStates.clear();
+
+	std::vector<scrState*> states = parse_scr(GetBbcfBaseAdress(), m_watchedSide + 1);
+	for (scrState* state : states)
+	{
+		names.push_back(state->name);
+		cancelTargets.insert(state->whiff_cancel.begin(), state->whiff_cancel.end());
+		cancelTargets.insert(state->hit_or_block_cancel.begin(), state->hit_or_block_cancel.end());
+		if (ScrStateNames::Categorize(state->name) == ScrStateNames::Category::Special)
+			m_specialStates.push_back(state->name);
+		delete state;
+	}
+
+	m_moves.SetStates(names, std::vector<std::string>(cancelTargets.begin(), cancelTargets.end()));
+	// The moves the script registers with their inputs: where 236A = Assault_A comes from.
+	for (const scrMoveRegistration& reg : parse_scr_move_registrations(GetBbcfBaseAdress(), m_watchedSide + 1))
+		registered.push_back({ reg.name, reg.type, reg.inputs });
+	m_moves.SetRegisteredMoves(registered);
+	m_moveListChar = m_library.CharIndex();
+	m_moveListSide = m_watchedSide;
+	m_movesGeneration = 0; // force the moves file to be applied again
+	LOG(2, "[ComboList] Move list for P%d: %d states, %d cancel targets, %d specials, %d registered moves (%d with a notation).\n",
+		m_watchedSide + 1, static_cast<int>(names.size()), static_cast<int>(cancelTargets.size()),
+		static_cast<int>(m_specialStates.size()), static_cast<int>(m_moves.RegisteredCount()),
+		static_cast<int>(m_moves.RegisteredWithNotation()));
+}
+
+void ComboListWindow::ApplyMovesFile()
+{
+	m_movesFileBadLines = m_moves.SetUserMappings(m_library.MovesText());
+	m_movesGeneration = m_library.Generation();
+	++m_tableVersion;
+}
+
 void ComboListWindow::SyncLibrary()
 {
 	const int charIndex = WatchedCharIndex();
@@ -73,18 +186,40 @@ void ComboListWindow::SyncLibrary()
 		m_library.Load(charIndex);
 		m_selectedCombo = 0;
 		m_framesUntilPoll = kPollIntervalFrames;
-		return;
 	}
-
-	if (--m_framesUntilPoll <= 0)
+	else if (--m_framesUntilPoll <= 0)
 	{
 		m_framesUntilPoll = kPollIntervalFrames;
 		m_library.ReloadIfChanged();
 	}
 
+	if (m_moveListChar != charIndex || m_moveListSide != m_watchedSide)
+		LoadMoveList();
+	if (m_movesGeneration != m_library.Generation())
+		ApplyMovesFile();
+
 	const int count = static_cast<int>(m_library.Combos().size());
 	if (m_selectedCombo >= count)
 		m_selectedCombo = count > 0 ? count - 1 : 0;
+}
+
+void ComboListWindow::ResolveSelectedCombo()
+{
+	if (m_resolvedCombo == m_selectedCombo && m_resolvedGeneration == m_library.Generation()
+		&& m_resolvedTableVersion == m_tableVersion)
+	{
+		return;
+	}
+
+	m_resolved.clear();
+	const Combo& combo = m_library.Combos()[m_selectedCombo];
+	for (const ComboStep& step : combo.steps)
+		m_resolved.push_back(m_moves.Resolve(step.notation, step.matchKey));
+
+	m_resolvedCombo = m_selectedCombo;
+	m_resolvedGeneration = m_library.Generation();
+	m_resolvedTableVersion = m_tableVersion;
+	m_tracker.Reset(m_resolved.size());
 }
 
 void ComboListWindow::Draw()
@@ -124,12 +259,83 @@ void ComboListWindow::DrawBody()
 		return;
 	}
 
+	const Combo& combo = combos[m_selectedCombo];
+	ResolveSelectedCombo();
+	UpdateTracker();
+
 	DrawSelector();
 	ImGui::Separator();
-	DrawSteps(combos[m_selectedCombo]);
+	DrawStatus();
+	DrawSteps(combo);
+	DrawResolutionNotes();
 
 	ImGui::Separator();
 	DrawTextSize();
+	ImGui::Checkbox("Show move names", &m_showMoveNames);
+	ImGui::ShowHelpMarkerSameLine("Lists the moves of the last combo with the game's name for each, and lets you copy that combo into the combo file.");
+	if (m_showMoveNames)
+		DrawMoveNames(combo);
+}
+
+void ComboListWindow::UpdateTracker()
+{
+	if (m_watchedSide != m_trackedSide)
+	{
+		m_tracker.Reset(m_resolved.size());
+		m_trackedSide = m_watchedSide;
+	}
+
+	const Player& attackerPlayer = m_watchedSide == 0 ? g_interfaces.player1 : g_interfaces.player2;
+	const Player& defenderPlayer = m_watchedSide == 0 ? g_interfaces.player2 : g_interfaces.player1;
+	if (attackerPlayer.IsCharDataNullPtr() || defenderPlayer.IsCharDataNullPtr() || !g_gameVals.pFrameCount)
+		return;
+
+	const CharData* attacker = attackerPlayer.GetData();
+	const CharData* defender = defenderPlayer.GetData();
+
+	ComboTrackerFrame frame;
+	frame.attackerAction = StateOf(attacker);
+	frame.attackerStateChanges = attacker->stateChangedCount;
+	frame.defenderHitCount = defender->hitCount;
+	frame.frameCount = *g_gameVals.pFrameCount;
+	m_tracker.OnFrame(frame, m_resolved, m_moves);
+}
+
+void ComboListWindow::DrawStatus()
+{
+	size_t hitSteps = 0;
+	size_t landed = 0;
+	for (size_t i = 0; i < m_resolved.size(); ++i)
+	{
+		if (m_resolved[i].match == StepMatch::AutoPass)
+			continue;
+		++hitSteps;
+		if (m_tracker.StepState(i) == ComboStepState::Landed)
+			++landed;
+	}
+
+	switch (m_tracker.RunState())
+	{
+	case ComboRunState::Idle:
+		ImGui::TextDisabled("Waiting for the first hit");
+		break;
+	case ComboRunState::InProgress:
+		ImGui::TextColored(kNextStepColor, "%d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
+		break;
+	case ComboRunState::Completed:
+		ImGui::TextColored(kLandedColor, "Complete! %d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
+		break;
+	case ComboRunState::Dropped:
+		ImGui::TextColored(kMissedColor, "Dropped at %d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
+		break;
+	case ComboRunState::OffRoute:
+		if (m_tracker.OffRouteHits() > 0)
+			ImGui::TextColored(kMissedColor, "Off route: %s landed %d hits", Describe(m_tracker.OffRouteMove(), m_moves).c_str(),
+				m_tracker.OffRouteHits());
+		else
+			ImGui::TextColored(kMissedColor, "Off route: %s landed", Describe(m_tracker.OffRouteMove(), m_moves).c_str());
+		break;
+	}
 }
 
 void ComboListWindow::DrawHeader()
@@ -144,6 +350,7 @@ void ComboListWindow::DrawHeader()
 	if (ImGui::SmallButton("Reload"))
 	{
 		m_library.Load(m_library.CharIndex());
+		m_moveListChar = -1; // re-read the script too
 	}
 }
 
@@ -223,24 +430,171 @@ void ComboListWindow::DrawSteps(const Combo& combo)
 		ImGui::PopStyleColor();
 	}
 
+	const bool tracking = m_tracker.RunState() != ComboRunState::Idle;
+
 	if (m_oneLine)
 	{
-		std::string line;
-		for (size_t i = 0; i < combo.steps.size(); ++i)
+		// Coloured pieces laid out by hand, since one Text() call can only have one colour.
+		const float wrapX = ImGui::GetCursorPosX() + kWrapWidth * m_fontScale;
+		const float spacing = ImGui::GetStyle().ItemSpacing.x;
+		for (size_t i = 0; i < m_resolved.size(); ++i)
 		{
+			const std::string piece = (i > 0 ? "> " : "") + m_resolved[i].display + MatchSuffix(m_resolved[i]);
 			if (i > 0)
-				line += " > ";
-			line += combo.steps[i].notation;
+			{
+				ImGui::SameLine(0.0f, spacing);
+				if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(piece.c_str()).x > wrapX)
+					ImGui::NewLine();
+			}
+			ImGui::TextColored(StepColor(i, tracking), "%s", piece.c_str());
+			StepTooltip(m_resolved[i]);
 		}
-		ImGui::TextUnformatted(line.c_str());
 		return;
 	}
 
-	for (size_t i = 0; i < combo.steps.size(); ++i)
+	for (size_t i = 0; i < m_resolved.size(); ++i)
 	{
-		ImGui::TextColored(kStepNumberColor, "%2d.", static_cast<int>(i + 1));
+		ImGui::TextColored(kStepNumberColor, "%s%2d.", StepMarker(i, tracking), static_cast<int>(i + 1));
 		ImGui::SameLine();
-		ImGui::TextUnformatted(combo.steps[i].notation.c_str());
+		ImGui::TextColored(StepColor(i, tracking), "%s%s", m_resolved[i].display.c_str(), MatchSuffix(m_resolved[i]));
+		StepTooltip(m_resolved[i]);
+	}
+}
+
+void ComboListWindow::DrawResolutionNotes()
+{
+	std::string loose;
+	std::string unknown;
+	std::string missing;
+	for (const ResolvedStep& step : m_resolved)
+	{
+		std::string* list = nullptr;
+		if (step.match == StepMatch::AnySpecial)
+			list = &loose;
+		else if (step.match == StepMatch::AnyMove)
+			list = &unknown;
+		else if (step.match == StepMatch::Exact && step.notInMoveList)
+			list = &missing;
+		if (list && list->find(step.display) == std::string::npos)
+			*list += (list->empty() ? "" : ", ") + step.display;
+	}
+
+	if (loose.empty() && unknown.empty() && missing.empty() && m_movesFileBadLines.empty())
+		return;
+
+	ImGui::Spacing();
+	if (!missing.empty())
+		ImGui::TextColored(kWarningColor, "Not in this character's moves (!): %s", missing.c_str());
+	if (!loose.empty())
+		ImGui::TextColored(kWarningColor, "Not mapped yet, any special counts (?): %s", loose.c_str());
+	if (!unknown.empty())
+		ImGui::TextColored(kWarningColor, "Not understood, any move counts (?): %s", unknown.c_str());
+	if (!m_movesFileBadLines.empty())
+	{
+		std::string lines;
+		for (int line : m_movesFileBadLines)
+			lines += (lines.empty() ? "" : ", ") + std::to_string(line);
+		ImGui::TextColored(kWarningColor, "Moves file lines not understood: %s", lines.c_str());
+	}
+
+	if (!loose.empty() || !unknown.empty())
+	{
+		ImGui::TextDisabled("Map them in %s", m_library.MovesRelativePath().c_str());
+		if (!m_library.MovesFileExists())
+		{
+			if (ImGui::SmallButton("Create moves file"))
+				m_library.CreateMovesFile(m_moves.RegisteredMoveLines(), m_specialStates);
+			ImGui::ShowHelpMarkerSameLine("Writes the file listing, as comments, the moves read from the game (with their inputs) and every special state in this character's script, ready to fill in as \"236D = StateName\".");
+		}
+	}
+}
+
+const char* ComboListWindow::StepMarker(size_t index, bool tracking) const
+{
+	if (index < m_resolved.size() && m_resolved[index].match == StepMatch::AutoPass)
+		return m_tracker.StepState(index) == ComboStepState::Landed ? "[x]" : " ~ "; // never checked
+	switch (m_tracker.StepState(index))
+	{
+	case ComboStepState::Landed: return "[x]";
+	case ComboStepState::Missed: return "[!]";
+	default: break;
+	}
+	if (tracking && m_tracker.RunState() == ComboRunState::InProgress && index == m_tracker.NextStep())
+		return " > ";
+	return "[ ]";
+}
+
+ImVec4 ComboListWindow::StepColor(size_t index, bool tracking) const
+{
+	if (index < m_resolved.size() && m_resolved[index].match == StepMatch::AutoPass)
+		return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+	switch (m_tracker.StepState(index))
+	{
+	case ComboStepState::Landed: return kLandedColor;
+	case ComboStepState::Missed: return kMissedColor;
+	default: break;
+	}
+	if (tracking && m_tracker.RunState() == ComboRunState::InProgress && index == m_tracker.NextStep())
+		return kNextStepColor;
+	return ImGui::GetStyleColorVec4(ImGuiCol_Text);
+}
+
+void ComboListWindow::DrawMoveNames(const Combo& combo)
+{
+	const Player& attackerPlayer = m_watchedSide == 0 ? g_interfaces.player1 : g_interfaces.player2;
+	if (!attackerPlayer.IsCharDataNullPtr())
+	{
+		ImGui::TextDisabled("State:");
+		ImGui::SameLine();
+		ImGui::TextUnformatted(Describe(StateOf(attackerPlayer.GetData()), m_moves).c_str());
+	}
+	if (!m_tracker.CurrentMove().empty())
+	{
+		ImGui::TextDisabled("Move:");
+		ImGui::SameLine();
+		ImGui::TextUnformatted(Describe(m_tracker.CurrentMove(), m_moves).c_str());
+	}
+	if (!m_moves.HasStates())
+		ImGui::TextColored(kWarningColor, "The script could not be read; normals are not checked against it.");
+	else if (m_moves.RegisteredCount() == 0)
+		ImGui::TextColored(kWarningColor, "The game's move list was not found; specials need the moves file.");
+	else
+		ImGui::TextDisabled("Game move list: %d moves, %d with inputs read",
+			static_cast<int>(m_moves.RegisteredCount()), static_cast<int>(m_moves.RegisteredWithNotation()));
+
+	const std::vector<ComboHit>& hits = m_tracker.Hits();
+	if (hits.empty())
+	{
+		ImGui::TextDisabled("Land a combo to list its moves.");
+		return;
+	}
+
+	ImGui::TextDisabled("Last combo:");
+	int moveNumber = 0;
+	for (const ComboHit& hit : hits)
+	{
+		if (hit.newMove)
+			ImGui::Text("%2d. %s", ++moveNumber, Describe(hit.move, m_moves).c_str());
+		else
+			ImGui::TextDisabled("     + hit in %s", hit.state.c_str());
+	}
+
+	if (moveNumber > 0) // at least one move credited, so there is a step to copy
+	{
+		if (ImGui::Button("Copy combo"))
+			ImGui::SetClipboardText(ComboRecording::RecordedComboText(hits, m_moves).c_str());
+		ImGui::ShowHelpMarkerSameLine("Copies the combo you just did as a \"combo: Recorded\" entry. Paste it into the combo file and rename it. Normals and throws are written as notation, specials as the moves file names them, or as their state name if it does not.");
+	}
+
+	// Only once the selected combo was completed: then the tracker itself paired each step
+	// with the move that ticked it off. After any other combo, pairing by position would be
+	// guesswork (a throw "= 5A").
+	const std::string movesLines = ComboRecording::MovesFileLines(combo, m_resolved, hits, m_tracker.RunState());
+	if (!movesLines.empty())
+	{
+		if (ImGui::Button("Copy moves file lines"))
+			ImGui::SetClipboardText(movesLines.c_str());
+		ImGui::ShowHelpMarkerSameLine("This combo was completed with steps that are not mapped yet. Copies a \"notation = StateName\" line for each, naming the move that ticked it off. Paste them into the moves file.");
 	}
 }
 

@@ -12,8 +12,9 @@
 // - "combo:" starts a new combo. Everything after it is the combo's name.
 // - Every other non-empty line is a list of steps separated by '>'. A combo may spread its
 //   steps over as many lines as you like. "->" works as a separator too.
-// - A step may carry a match key after a '|', e.g. "5B | NmlAtk5B". It is not used yet;
-//   it is reserved for ticking steps off as they land.
+// - A step may carry a match key after a '|', e.g. "5B | NmlAtk5B", to override what the
+//   step accepts. "A/B" accepts either, and "-" makes the step auto-pass. Usually not needed:
+//   MoveTable works the states out from the notation. See MoveTable.h.
 // - The keywords are case-insensitive.
 
 #include <string>

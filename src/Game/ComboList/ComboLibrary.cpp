@@ -12,10 +12,11 @@
 namespace
 {
 	const char* const kCombosFolder = "BBCF_IM\\Combos";
+	const char* const kMovesFolder = "BBCF_IM\\Combos\\Moves";
 
 	const char* const kStarterText =
 		"# Combo list for %CHAR%\n"
-		"# Shown by the mod's \"Combo list\" window in training mode (F1 > Overlays).\n"
+		"# Shown by the mod's \"Combo List\" window in training mode (F1 > Overlays).\n"
 		"# The window re-reads this file when you save it, so you can edit it while the game runs.\n"
 		"#\n"
 		"# combo: <name>    starts a new combo\n"
@@ -23,11 +24,48 @@ namespace
 		"# Any other line is a list of steps separated by '>'.\n"
 		"# A combo can spread its steps over several lines.\n"
 		"# Lines starting with # are ignored.\n"
+		"#\n"
+		"# Normals and universal moves are checked exactly: 5A, 2B, 6A, j.5C, j.2C, B+C (throw),\n"
+		"# 4B+C, j.B+C, A+B (Crush Trigger), 6A+B (Counter Assault). Attacks always need their\n"
+		"# direction number (j.5C, not j.C). The game's own state name works too (NmlAtk2A).\n"
+		"# Specials are written as their input (236A, 623C, 236236D): the window reads each move's\n"
+		"# input from the game. If one is not recognised, map it in Moves\\%CHAR%.txt; until then it\n"
+		"# accepts any special.\n"
+		"#\n"
+		"# Optional steps: wrap the step in square brackets and it is shown but never checked,\n"
+		"# passing as soon as the step before it lands. Any text works: [Bomb], [6D], [walk up].\n"
+		"#     5B > 5C > [6D] > 236A\n"
+		"# Movement (jc = jump cancel, sjc = super jump cancel, dash, land, dl.) is optional\n"
+		"# without brackets. (\" | -\" after a step does the same as brackets.)\n"
+		"#\n"
+		"# Delays: dl.5C (or dl. 5C) shows the delay; only the 5C is checked.\n"
+		"# Hit counts: 3C(1) means 3C must land exactly 1 hit before the next move; a second hit\n"
+		"# of it goes off route. Without the (1), 3C just has to hit.\n"
+		"#\n"
+		"# Tip: tick \"Show move names\" in the window, do a combo, then \"Copy combo\" to get it in\n"
+		"# this format, ready to paste.\n"
 		"\n"
 		"combo: Example - replace me\n"
 		"note: Placeholder steps, not a real route.\n"
 		"5A > 5B > 5C\n"
-		"2C > 6A\n";
+		"2C > 6A\n"
+		"\n"
+		"combo: Example with the extras - replace me\n"
+		"note: [6D] is shown but never checked; dl.2C only checks the 2C; 3C(1) wants 1 hit.\n"
+		"5B > 5C > [6D] > dl.2C > 3C(1) > 236A\n";
+
+	const char* const kMovesHeader =
+		"# Moves for %CHAR%, used by the Combo List window to check steps exactly.\n"
+		"#\n"
+		"#   notation = StateName          e.g.  236D = Skill1\n"
+		"#   notation = StateA/StateB      either state counts (e.g. a ground and an air version)\n"
+		"#\n"
+		"# Most moves do not need a line: normals and throws are worked out from their state names,\n"
+		"# and specials from the game's own move list (listed below). Add a line for a move the\n"
+		"# window gets wrong or cannot name; a line here always wins.\n"
+		"#\n"
+		"# To find a move's state name: tick \"Show move names\" in the Combo List window and do the\n"
+		"# move; it shows the move each hit was credited to.\n";
 
 	std::string ReplaceAll(std::string text, const std::string& from, const std::string& to)
 	{
@@ -41,22 +79,20 @@ namespace
 	}
 }
 
-std::string ComboLibrary::RelativePathFor(int charIndex)
+// ---------------------------------------------------------------------------------------------
+
+void WatchedTextFile::SetPath(const std::string& relativePath)
 {
-	if (isCharacterIndexOutOfBound(charIndex))
-		return std::string();
-	return std::string(kCombosFolder) + "\\" + getCharacterNameByIndexA(charIndex) + ".txt";
+	m_relativePath = relativePath;
+	m_fullPath = relativePath.empty() ? std::string() : GamePath(relativePath);
+	m_exists = false;
+	m_read = false;
+	m_writeTime = 0;
+	m_size = 0;
+	m_text.clear();
 }
 
-void ComboLibrary::Load(int charIndex)
-{
-	m_charIndex = charIndex;
-	m_relativePath = RelativePathFor(charIndex);
-	m_fullPath = m_relativePath.empty() ? std::string() : GamePath(m_relativePath);
-	ReadFile();
-}
-
-bool ComboLibrary::ReadStamp(uint64_t& outWriteTime, uint64_t& outSize) const
+bool WatchedTextFile::ReadStamp(uint64_t& outWriteTime, uint64_t& outSize) const
 {
 	WIN32_FILE_ATTRIBUTE_DATA data;
 	if (m_fullPath.empty() || !GetFileAttributesExA(m_fullPath.c_str(), GetFileExInfoStandard, &data))
@@ -69,70 +105,143 @@ bool ComboLibrary::ReadStamp(uint64_t& outWriteTime, uint64_t& outSize) const
 	return true;
 }
 
-void ComboLibrary::ReadFile()
+bool WatchedTextFile::Refresh(bool force)
 {
-	m_combos.clear();
-	m_issues.clear();
-	m_writeTime = 0;
-	m_size = 0;
-	m_fileExists = ReadStamp(m_writeTime, m_size);
-	if (!m_fileExists)
-		return;
+	uint64_t writeTime = 0;
+	uint64_t size = 0;
+	const bool exists = ReadStamp(writeTime, size);
+	if (!force && m_read && exists == m_exists && writeTime == m_writeTime && size == m_size)
+		return false;
+
+	m_read = true;
+	m_exists = exists;
+	m_writeTime = writeTime;
+	m_size = size;
+	m_text.clear();
+	if (!exists)
+		return true;
 
 	std::ifstream file(m_fullPath, std::ios::in | std::ios::binary);
 	if (!file)
 	{
-		m_issues.push_back({ 0, "The file exists but could not be opened." });
 		LOG(2, "[ComboList] Could not open '%s'\n", m_fullPath.c_str());
-		return;
+		return true;
 	}
-
 	std::stringstream buffer;
 	buffer << file.rdbuf();
-	ComboParser::Parse(buffer.str(), m_combos, m_issues);
+	m_text = buffer.str();
+	return true;
+}
+
+// ---------------------------------------------------------------------------------------------
+
+std::string ComboLibrary::RelativePathFor(int charIndex)
+{
+	if (isCharacterIndexOutOfBound(charIndex))
+		return std::string();
+	return std::string(kCombosFolder) + "\\" + getCharacterNameByIndexA(charIndex) + ".txt";
+}
+
+std::string ComboLibrary::MovesRelativePathFor(int charIndex)
+{
+	if (isCharacterIndexOutOfBound(charIndex))
+		return std::string();
+	return std::string(kMovesFolder) + "\\" + getCharacterNameByIndexA(charIndex) + ".txt";
+}
+
+void ComboLibrary::Load(int charIndex)
+{
+	m_charIndex = charIndex;
+	m_combosFile.SetPath(RelativePathFor(charIndex));
+	m_movesFile.SetPath(MovesRelativePathFor(charIndex));
+	m_combosFile.Refresh(true);
+	m_movesFile.Refresh(true);
+	ParseCombos();
+	++m_generation;
+}
+
+void ComboLibrary::ParseCombos()
+{
+	m_combos.clear();
+	m_issues.clear();
+	if (!m_combosFile.Exists())
+		return;
+
+	ComboParser::Parse(m_combosFile.Text(), m_combos, m_issues);
 	LOG(2, "[ComboList] Loaded %d combos (%d issues) from '%s'\n",
-		static_cast<int>(m_combos.size()), static_cast<int>(m_issues.size()), m_fullPath.c_str());
+		static_cast<int>(m_combos.size()), static_cast<int>(m_issues.size()), m_combosFile.FullPath().c_str());
 }
 
 bool ComboLibrary::ReloadIfChanged()
 {
-	if (m_fullPath.empty())
+	if (m_combosFile.FullPath().empty())
 		return false;
 
-	uint64_t writeTime = 0;
-	uint64_t size = 0;
-	const bool exists = ReadStamp(writeTime, size);
-	if (exists == m_fileExists && writeTime == m_writeTime && size == m_size)
+	const bool combosChanged = m_combosFile.Refresh();
+	const bool movesChanged = m_movesFile.Refresh();
+	if (combosChanged)
+		ParseCombos();
+	if (combosChanged || movesChanged)
+		++m_generation;
+	return combosChanged || movesChanged;
+}
+
+bool ComboLibrary::WriteNewFile(const std::string& fullPath, const std::string& text)
+{
+	CreateDirectoryA(GamePath("BBCF_IM").c_str(), NULL);
+	CreateDirectoryA(GamePath(kCombosFolder).c_str(), NULL);
+	CreateDirectoryA(GamePath(kMovesFolder).c_str(), NULL);
+
+	// Never overwrite: the player's own files are the one thing here that cannot be regenerated.
+	if (fullPath.empty() || GetFileAttributesA(fullPath.c_str()) != INVALID_FILE_ATTRIBUTES)
 		return false;
 
-	ReadFile();
+	std::ofstream file(fullPath, std::ios::out | std::ios::binary);
+	if (!file)
+	{
+		LOG(2, "[ComboList] Could not create '%s'\n", fullPath.c_str());
+		return false;
+	}
+	file << text;
 	return true;
 }
 
 bool ComboLibrary::CreateStarterFile()
 {
-	if (m_fullPath.empty() || isCharacterIndexOutOfBound(m_charIndex))
+	if (isCharacterIndexOutOfBound(m_charIndex))
 		return false;
 
-	CreateDirectoryA(GamePath("BBCF_IM").c_str(), NULL);
-	CreateDirectoryA(GamePath(kCombosFolder).c_str(), NULL);
+	const std::string name = getCharacterNameByIndexA(m_charIndex);
+	const bool written = WriteNewFile(m_combosFile.FullPath(), ReplaceAll(kStarterText, "%CHAR%", name));
+	m_combosFile.Refresh(true);
+	ParseCombos();
+	++m_generation;
+	return written;
+}
 
-	// Never overwrite: the user's combos are the one thing here that cannot be regenerated.
-	if (GetFileAttributesA(m_fullPath.c_str()) != INVALID_FILE_ATTRIBUTES)
-	{
-		ReadFile();
+bool ComboLibrary::CreateMovesFile(const std::vector<std::string>& registeredLines, const std::vector<std::string>& specialStates)
+{
+	if (isCharacterIndexOutOfBound(m_charIndex))
 		return false;
-	}
 
-	std::ofstream file(m_fullPath, std::ios::out | std::ios::binary);
-	if (!file)
-	{
-		LOG(2, "[ComboList] Could not create '%s'\n", m_fullPath.c_str());
-		return false;
-	}
-	file << ReplaceAll(kStarterText, "%CHAR%", getCharacterNameByIndexA(m_charIndex));
-	file.close();
+	const std::string name = getCharacterNameByIndexA(m_charIndex);
+	std::string text = ReplaceAll(kMovesHeader, "%CHAR%", name);
+	text += "#\n# Read from the game's own move list (already used; no need to copy these). A \"?\" line\n"
+		"# has inputs the window could not name: add it below with its notation.\n";
+	if (registeredLines.empty())
+		text += "#   (none found)\n";
+	for (const std::string& line : registeredLines)
+		text += "#   " + line + "\n";
+	text += "#\n# Every special state in " + name + "'s script, for reference. Many are follow-ups or effects\n"
+		"# rather than moves you input; the move is usually the first state of a family.\n";
+	if (specialStates.empty())
+		text += "#   (The script could not be read, so the list is empty.)\n";
+	for (const std::string& state : specialStates)
+		text += "#   " + state + "\n";
+	text += "\n";
 
-	ReadFile();
-	return m_fileExists;
+	const bool written = WriteNewFile(m_movesFile.FullPath(), text);
+	m_movesFile.Refresh(true);
+	++m_generation;
+	return written;
 }

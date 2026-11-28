@@ -226,6 +226,7 @@
     <ClCompile Include="src\Overlay\Window\Ranked\RankedLeaderboardWindow.cpp" />
     <ClCompile Include="src\Game\Scr\ScrStateReader.cpp" />
     <ClCompile Include="src\Game\Scr\ScrStateNames.cpp" />
+    <ClCompile Include="src\Game\Scr\ScrMoveRegistrations.cpp" />
     <ClCompile Include="src\Overlay\Window\ScrWindow.cpp" />
     <ClCompile Include="src\Overlay\Window\TasWindow.cpp" />
     <ClCompile Include="src\Overlay\Window\TasInputListWindow.cpp" />
@@ -246,6 +247,8 @@
     <ClCompile Include="src\Overlay\Window\ComboListWindow.cpp" />
     <ClCompile Include="src\Game\ComboList\ComboLibrary.cpp" />
     <ClCompile Include="src\Game\ComboList\ComboParser.cpp" />
+    <ClCompile Include="src\Game\ComboList\ComboTracker.cpp" />
+    <ClCompile Include="src\Game\ComboList\MoveTable.cpp" />
     <ClCompile Include="src\Game\SnapshotApparatus\SnapshotApparatus.cpp" />
     <ClCompile Include="src\Game\SnapshotApparatus\SnapshotSlotPool.cpp" />
     <ClCompile Include="src\Network\ReplayUploadManager.cpp" />
@@ -498,6 +501,7 @@
     <ClInclude Include="src\Game\Scr\ScrStateEntry.h" />
     <ClInclude Include="src\Game\Scr\ScrStateReader.h" />
     <ClInclude Include="src\Game\Scr\ScrStateNames.h" />
+    <ClInclude Include="src\Game\Scr\ScrMoveRegistrations.h" />
     <ClInclude Include="src\Overlay\Window\FrameAdvantage\FrameAdvantage.h" />
     <ClInclude Include="src\Game\ReplayStates\FrameState.h" />
     <ClInclude Include="src\Game\Menus\TrainingSetupMenu.h" />
@@ -512,6 +516,8 @@
     <ClInclude Include="src\Overlay\Window\ComboListWindow.h" />
     <ClInclude Include="src\Game\ComboList\ComboLibrary.h" />
     <ClInclude Include="src\Game\ComboList\ComboParser.h" />
+    <ClInclude Include="src\Game\ComboList\ComboTracker.h" />
+    <ClInclude Include="src\Game\ComboList\MoveTable.h" />
     <ClInclude Include="src\Game\GhidraDefs.h" />
     <ClInclude Include="src\Game\SnapshotApparatus\SnapshotApparatus.h" />
     <ClInclude Include="src\Game\SnapshotApparatus\SnapshotSlotPool.h" />

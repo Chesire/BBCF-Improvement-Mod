@@ -4,10 +4,13 @@
 #include "Core/logger.h"
 #include "Game/characters.h"
 #include "CmdList.h"
+#include "ScrMoveRegistrations.h"
 #include <chrono>
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <cstring>
+#include <utility>
 
 
 // Per-parse telemetry, summarised into DEBUG.txt at the end of every parse_scr. These are the
@@ -595,6 +598,109 @@ int parse_state(char* addr,
 
 	states_parsed.push_back(s);
 	return 0;
+}
+
+namespace
+{
+	// A command's total size (its id included) for the registration scanner, or 0 if unknown:
+	// the size tables, plus the commands parse_state reads by hand (the same list as
+	// tools/bbscript_dump.py, which mirrors this parser).
+	unsigned int ScrCommandSize(unsigned int command)
+	{
+		const std::pair<const std::vector<unsigned int>*, unsigned int> tables[] = {
+			{ &size_4, 4 }, { &size_8, 8 }, { &size_12, 12 }, { &size_16, 16 }, { &size_20, 20 },
+			{ &size_24, 24 }, { &size_28, 28 }, { &size_32, 32 }, { &size_36, 36 }, { &size_40, 40 },
+			{ &size_44, 44 }, { &size_48, 48 }, { &size_52, 52 }, { &size_68, 68 }, { &size_72, 72 },
+			{ &size_84, 84 }, { &size_88, 88 }, { &size_132, 132 }, { &size_148, 148 },
+		};
+		for (const auto& table : tables)
+		{
+			if (std::find(table.first->begin(), table.first->end(), command) != table.first->end())
+				return table.second;
+		}
+		switch (command)
+		{
+		case 0: return 36;    // beginState(string[32])
+		case 1: return 4;     // endState
+		case 2: return 40;    // sprite(string[32], int)
+		case 4000: return 40;
+		case 2002: case 23027: return 4;
+		case 22007: return 8;
+		case 22019: return 24;
+		case 9001: case 9002: case 9003: case 9154: case 11000: case 9274: case 9286:
+		case 11035: case 11036: case 11037: case 11088: case 12051: case 11028: return 8;
+		case 14068: case 14069: return 36;
+		case 23030: return 4 + 32 + 32;
+		case 23183: return 4 + 32 + 12;
+		case 4003: return 4 + 32 + 32;
+		case 7006: case 7007: return 4 + 48 + 12;
+		case 12045: return 4 + 64;
+		default: return 0;
+		}
+	}
+}
+
+std::vector<scrMoveRegistration> parse_scr_move_registrations(char* bbcf_base_addr, int player_num) {
+	CharData* p1 = g_interfaces.player1.GetData();
+	CharData* p2 = g_interfaces.player2.GetData();
+	// Same rule as parse_scr: in a mirror only player 1's slot has a script.
+	if (player_num == 2 && p1 && p2 && p1->charIndex == p2->charIndex)
+		player_num = 1;
+	if (player_num != 1 && player_num != 2)
+		return {};
+
+	char** fpac_load = (char**)(bbcf_base_addr + (player_num == 2 ? FPAC_OFFSET_FROM_BBCF_P2 : FPAC_OFFSET_FROM_BBCF_P1));
+	char** scr_preinit_offset = (char**)(bbcf_base_addr + (player_num == 2 ? PREINIT_OFFSET_FROM_BBCF_P2 : PREINIT_OFFSET_FROM_BBCF_P1));
+	if (*fpac_load == NULL || *scr_preinit_offset == NULL) {
+		LOG(1, "[Scr] P%d script pack not loaded; no move registrations read.\n", player_num);
+		return {};
+	}
+
+	// The script file's size comes from its FPAC entry (layout as in src/Audio/PacFile.cpp and
+	// tools/bbscript_dump.py: +0x04 data start, +0x0C file count, +0x14 name length, entries from
+	// +0x20 holding name, index, offset, size). Every value is checked before the scan trusts it,
+	// so a pack that does not look like this is skipped rather than read past its end.
+	const char* fpac = *fpac_load;
+	const char* scr_index = fpac + OFFSET_FROM_FPAC;
+	if (memcmp(fpac, "FPAC", 4) != 0) {
+		LOG(1, "[Scr] P%d script pack has no FPAC header; no move registrations read.\n", player_num);
+		return {};
+	}
+	unsigned int dataStart = 0, fileCount = 0, nameLength = 0;
+	memcpy(&dataStart, fpac + 0x04, 4);
+	memcpy(&fileCount, fpac + 0x0C, 4);
+	memcpy(&nameLength, fpac + 0x14, 4);
+	if (fileCount == 0 || fileCount > 64 || nameLength == 0 || nameLength > 256 || dataStart < 0x20
+		|| (dataStart - 0x20) / fileCount < nameLength + 12) {
+		LOG(1, "[Scr] P%d FPAC header implausible (dataStart=0x%X files=%u nameLength=%u); no move registrations read.\n",
+			player_num, dataStart, fileCount, nameLength);
+		return {};
+	}
+	const unsigned int stride = (dataStart - 0x20) / fileCount;
+	unsigned int scriptSize = 0;
+	for (unsigned int i = 0; i < fileCount; ++i) {
+		const char* entry = fpac + 0x20 + i * stride;
+		unsigned int fileOffset = 0, fileSize = 0;
+		memcpy(&fileOffset, entry + nameLength + 4, 4);
+		memcpy(&fileSize, entry + nameLength + 8, 4);
+		if (fpac + dataStart + fileOffset == scr_index) {
+			scriptSize = fileSize;
+			break;
+		}
+	}
+	const char* code = *scr_preinit_offset;
+	const unsigned int kMaxScriptSize = 64 * 1024 * 1024;
+	if (scriptSize == 0 || scriptSize > kMaxScriptSize || code < scr_index || code >= scr_index + scriptSize) {
+		LOG(1, "[Scr] P%d script entry not found in its FPAC (size=%u); no move registrations read.\n",
+			player_num, scriptSize);
+		return {};
+	}
+
+	std::vector<scrMoveRegistration> registrations =
+		FindMoveRegistrations(code, static_cast<size_t>(scr_index + scriptSize - code), &ScrCommandSize);
+	LOG(2, "[Scr] P%d: %d move registrations in %u bytes of script.\n",
+		player_num, static_cast<int>(registrations.size()), scriptSize);
+	return registrations;
 }
 
 void override_state(char* addr, char* new_state) {
