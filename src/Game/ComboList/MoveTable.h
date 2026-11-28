@@ -41,6 +41,14 @@ struct ResolvedStep
 	bool notInMoveList = false;     // Exact, but the character has no such state (likely typo)
 };
 
+// A move as the character's script registers it (scrMoveRegistration, without the game types).
+struct RegisteredMove
+{
+	std::string name;                 // the move's state name, e.g. "Assault_A"
+	unsigned int type = 0;            // 2 special, 0x606 distortion, 0x607 astral, 0x1xx..0x4xx normal
+	std::vector<unsigned int> inputs; // moveInput values, e.g. { 172, 4 } = 236 + A
+};
+
 class MoveTable
 {
 public:
@@ -51,6 +59,25 @@ public:
 	// "notation = State[/State...]" lines from the character's moves file. '#' comments.
 	// Returns the line numbers (1-based) it could not read.
 	std::vector<int> SetUserMappings(const std::string& fileText);
+
+	// The moves the character's script registers, with the inputs that perform them. This is
+	// how specials get their notation (Assault_A -> 236A) without a moves file. Movement
+	// registrations (walks, dashes, jumps) are ignored.
+	void SetRegisteredMoves(const std::vector<RegisteredMove>& moves);
+
+	// The notation a registration's type and inputs stand for ("236A", "5D", "j.5C"), or "" when
+	// an input value is not one this table knows (it is then left to the moves file).
+	// Values: buttons and motions from the game's motion table (172 = 236 is entry 0, 173 = 623
+	// is entry 1, per docs/Research/TriggerTimingInvestigation.md) and the bbscript / bbtools
+	// BBCF databases, which agree on every value used here.
+	static std::string NotationFromRegistration(unsigned int type, const std::vector<unsigned int>& inputs);
+
+	// For the window: how many registrations were read, and how many got a notation.
+	size_t RegisteredCount() const { return m_registeredTotal; }
+	size_t RegisteredWithNotation() const { return m_registeredNotation.size(); }
+	// "236A = Assault_A" style lines (and "? = Name  (inputs 182 22)" for unknown ones), for
+	// the moves file template.
+	std::vector<std::string> RegisteredMoveLines() const { return m_registeredLines; }
 
 	bool HasStates() const { return !m_states.empty(); }
 	const std::vector<std::string>& States() const { return m_stateList; }
@@ -98,6 +125,12 @@ private:
 	// Normalized notation -> state names, from the moves file.
 	std::map<std::string, std::vector<std::string>> m_user;
 	std::set<std::string> m_userStates;    // lower-cased
+	// From the script's move registrations.
+	std::map<std::string, std::vector<std::string>> m_registeredByNotation; // normalized -> states
+	std::map<std::string, std::string> m_registeredNotation;             // lower state -> notation
+	std::set<std::string> m_registeredMoves;                             // lower state names
+	std::vector<std::string> m_registeredLines;
+	size_t m_registeredTotal = 0;
 	// Lower-cased state -> the notation of the first moves-file line naming it, as written.
 	// m_user only keeps the normalized form ("236a"), which is not what a player would type.
 	std::map<std::string, std::string> m_userNotation;

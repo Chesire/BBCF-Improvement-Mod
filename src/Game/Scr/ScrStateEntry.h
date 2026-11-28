@@ -52,6 +52,23 @@ enum class FrameInvuln {
 	//All = Head | Body | Foot | Throw | Proj, 
 	// missing projectile invuln
 };
+// One move the character can input, as the script registers it (commands 14001..14002, usually
+// in the character's init state). Command layout from the bbscript BBCF database
+// (super-continent/bbscript static_db/bbcf.ron, GPL-3.0), and matches CmdList.h's sizes:
+//   14001 registerMove(string[32] name, int type)   type: 2 special, 0x606 distortion,
+//         0x607 astral heat, 0x1xx..0x4xx a normal (button A..D, direction byte)
+//   14003 (int)   meaning not established: addMoveCondition / Move_AirGround_ in the two DBs
+//   14012 moveInput(int input)                      e.g. 172 = 236, 22 = press C
+//   14013 moveCallSubroutine(string[32])
+//   14002 endRegisterMove
+struct scrMoveRegistration {
+	std::string name;
+	unsigned int type = 0;
+	std::vector<unsigned int> inputs;
+	std::vector<unsigned int> conditions; // raw 14003 values, kept for diagnosis
+	std::string subroutine;
+};
+
 //gotta remember to clean up the memory afterwards
 struct scrState {
 	std::string name = "";
@@ -78,6 +95,8 @@ struct scrState {
 	unsigned int hit_air_unblockable = 0;
 	unsigned int fatal_counter = 0;
 	std::vector<std::string> whiff_cancel = {};
+	// Moves registered inside this state (normally only the character's init state has any).
+	std::vector<scrMoveRegistration> move_registrations = {};
 	std::vector<std::string> hit_or_block_cancel = {};
 	//std::vector<std::string> frame_activity_status = {};
 	std::vector<FrameActivity> frame_activity_status = {}; //vector of combinations from FrameActivity

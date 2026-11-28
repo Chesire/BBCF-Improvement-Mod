@@ -34,9 +34,12 @@ namespace
 		return std::string(data->currentAction, strnlen(data->currentAction, sizeof(data->currentAction)));
 	}
 
-	// "2A (NmlAtk2A)", or just the name when the display form adds nothing.
-	std::string Describe(const std::string& state)
+	// "236A (Assault_A)", "2A (NmlAtk2A)", or just the name when nothing better is known.
+	std::string Describe(const std::string& state, const MoveTable& table)
 	{
+		const std::string notation = table.NotationFor(state);
+		if (notation != state)
+			return notation + " (" + state + ")";
 		const std::string display = MoveTable::DisplayName(state);
 		return display == state ? state : display + " (" + state + ")";
 	}
@@ -132,6 +135,7 @@ void ComboListWindow::LoadMoveList()
 	// character has, plus the cancel lists that say which of them are moves of their own.
 	std::vector<std::string> names;
 	std::set<std::string> cancelTargets;
+	std::vector<RegisteredMove> registered;
 	m_specialStates.clear();
 
 	std::vector<scrState*> states = parse_scr(GetBbcfBaseAdress(), m_watchedSide + 1);
@@ -142,16 +146,21 @@ void ComboListWindow::LoadMoveList()
 		cancelTargets.insert(state->hit_or_block_cancel.begin(), state->hit_or_block_cancel.end());
 		if (ScrStateNames::Categorize(state->name) == ScrStateNames::Category::Special)
 			m_specialStates.push_back(state->name);
+		// The moves the script registers with their inputs: where 236A = Assault_A comes from.
+		for (const scrMoveRegistration& reg : state->move_registrations)
+			registered.push_back({ reg.name, reg.type, reg.inputs });
 		delete state;
 	}
 
 	m_moves.SetStates(names, std::vector<std::string>(cancelTargets.begin(), cancelTargets.end()));
+	m_moves.SetRegisteredMoves(registered);
 	m_moveListChar = m_library.CharIndex();
 	m_moveListSide = m_watchedSide;
 	m_movesGeneration = 0; // force the moves file to be applied again
-	LOG(2, "[ComboList] Move list for P%d: %d states, %d cancel targets, %d specials.\n",
+	LOG(2, "[ComboList] Move list for P%d: %d states, %d cancel targets, %d specials, %d registered moves (%d with a notation).\n",
 		m_watchedSide + 1, static_cast<int>(names.size()), static_cast<int>(cancelTargets.size()),
-		static_cast<int>(m_specialStates.size()));
+		static_cast<int>(m_specialStates.size()), static_cast<int>(m_moves.RegisteredCount()),
+		static_cast<int>(m_moves.RegisteredWithNotation()));
 }
 
 void ComboListWindow::ApplyMovesFile()
@@ -315,7 +324,7 @@ void ComboListWindow::DrawStatus()
 		ImGui::TextColored(kMissedColor, "Dropped at %d/%d", static_cast<int>(landed), static_cast<int>(hitSteps));
 		break;
 	case ComboRunState::OffRoute:
-		ImGui::TextColored(kMissedColor, "Off route: %s landed", Describe(m_tracker.OffRouteMove()).c_str());
+		ImGui::TextColored(kMissedColor, "Off route: %s landed", Describe(m_tracker.OffRouteMove(), m_moves).c_str());
 		break;
 	}
 }
@@ -485,8 +494,8 @@ void ComboListWindow::DrawResolutionNotes()
 		if (!m_library.MovesFileExists())
 		{
 			if (ImGui::SmallButton("Create moves file"))
-				m_library.CreateMovesFile(m_specialStates);
-			ImGui::ShowHelpMarkerSameLine("Writes the file with every special state in this character's script listed as a comment, ready to fill in as \"236D = StateName\".");
+				m_library.CreateMovesFile(m_moves.RegisteredMoveLines(), m_specialStates);
+			ImGui::ShowHelpMarkerSameLine("Writes the file listing, as comments, the moves read from the game (with their inputs) and every special state in this character's script, ready to fill in as \"236D = StateName\".");
 		}
 	}
 }
@@ -528,16 +537,21 @@ void ComboListWindow::DrawMoveNames(const Combo& combo)
 	{
 		ImGui::TextDisabled("State:");
 		ImGui::SameLine();
-		ImGui::TextUnformatted(Describe(StateOf(attackerPlayer.GetData())).c_str());
+		ImGui::TextUnformatted(Describe(StateOf(attackerPlayer.GetData()), m_moves).c_str());
 	}
 	if (!m_tracker.CurrentMove().empty())
 	{
 		ImGui::TextDisabled("Move:");
 		ImGui::SameLine();
-		ImGui::TextUnformatted(Describe(m_tracker.CurrentMove()).c_str());
+		ImGui::TextUnformatted(Describe(m_tracker.CurrentMove(), m_moves).c_str());
 	}
 	if (!m_moves.HasStates())
 		ImGui::TextColored(kWarningColor, "The script could not be read; normals are not checked against it.");
+	else if (m_moves.RegisteredCount() == 0)
+		ImGui::TextColored(kWarningColor, "The game's move list was not found; specials need the moves file.");
+	else
+		ImGui::TextDisabled("Game move list: %d moves, %d with inputs read",
+			static_cast<int>(m_moves.RegisteredCount()), static_cast<int>(m_moves.RegisteredWithNotation()));
 
 	const std::vector<ComboHit>& hits = m_tracker.Hits();
 	if (hits.empty())
@@ -551,7 +565,7 @@ void ComboListWindow::DrawMoveNames(const Combo& combo)
 	for (const ComboHit& hit : hits)
 	{
 		if (hit.newMove)
-			ImGui::Text("%2d. %s", ++moveNumber, Describe(hit.move).c_str());
+			ImGui::Text("%2d. %s", ++moveNumber, Describe(hit.move, m_moves).c_str());
 		else
 			ImGui::TextDisabled("     + hit in %s", hit.state.c_str());
 	}

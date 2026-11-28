@@ -28,15 +28,28 @@ namespace
 		"# Normals and universal moves are checked exactly: 5A, 2B, 6A, j.5C, j.2C, B+C (throw),\n"
 		"# 4B+C, j.B+C, A+B (Crush Trigger), 6A+B (Counter Assault). Attacks always need their\n"
 		"# direction number (j.5C, not j.C). The game's own state name works too (NmlAtk2A).\n"
-		"# Movement (jc = jump cancel, sjc = super jump cancel, dash, land, dl.) is never checked;\n"
-		"# it passes as soon as the step before it lands.\n"
-		"# Specials like 236D need a line in Moves\\%CHAR%.txt to be checked exactly; until then\n"
-		"# they accept any special.\n"
+		"# Specials are written as their input (236A, 623C, 236236D): the window reads each move's\n"
+		"# input from the game. If one is not recognised, map it in Moves\\%CHAR%.txt; until then it\n"
+		"# accepts any special.\n"
+		"#\n"
+		"# Optional / untracked steps: put \" | -\" after a step and it is shown but never checked.\n"
+		"# It passes as soon as the step before it lands. Use it for setups that do not hit\n"
+		"# (placing a summon, a delay) or anything you do not want checked:\n"
+		"#     5B > 5C > 6D | - > 236A\n"
+		"# Movement (jc = jump cancel, sjc = super jump cancel, dash, land, dl.) works that way\n"
+		"# without the \" | -\".\n"
+		"#\n"
+		"# Tip: tick \"Show move names\" in the window, do a combo, then \"Copy combo\" to get it in\n"
+		"# this format, ready to paste.\n"
 		"\n"
 		"combo: Example - replace me\n"
 		"note: Placeholder steps, not a real route.\n"
 		"5A > 5B > 5C\n"
-		"2C > 6A\n";
+		"2C > 6A\n"
+		"\n"
+		"combo: Example with an optional step - replace me\n"
+		"note: The 5D step is shown but never checked.\n"
+		"5B > 5C > 5D | - > 2C\n";
 
 	const char* const kMovesHeader =
 		"# Moves for %CHAR%, used by the Combo List window to check steps exactly.\n"
@@ -44,15 +57,12 @@ namespace
 		"#   notation = StateName          e.g.  236D = Skill1\n"
 		"#   notation = StateA/StateB      either state counts (e.g. a ground and an air version)\n"
 		"#\n"
-		"# Normals (5A, 2B, j.5C, ...) and throws do not need a line; they are worked out from the\n"
-		"# state names. A line here overrides that if you need it to.\n"
+		"# Most moves do not need a line: normals and throws are worked out from their state names,\n"
+		"# and specials from the game's own move list (listed below). Add a line for a move the\n"
+		"# window gets wrong or cannot name; a line here always wins.\n"
 		"#\n"
 		"# To find a move's state name: tick \"Show move names\" in the Combo List window and do the\n"
-		"# move; it shows the move each hit was credited to. \"Copy moves file lines\" copies the\n"
-		"# lines for the unmapped steps of the last combo.\n"
-		"#\n"
-		"# Every special state in %CHAR%'s script, for reference. Many are follow-ups or effects\n"
-		"# rather than moves you input; the move is usually the first state of a family.\n";
+		"# move; it shows the move each hit was credited to.\n";
 
 	std::string ReplaceAll(std::string text, const std::string& from, const std::string& to)
 	{
@@ -206,15 +216,23 @@ bool ComboLibrary::CreateStarterFile()
 	return written;
 }
 
-bool ComboLibrary::CreateMovesFile(const std::vector<std::string>& specialStates)
+bool ComboLibrary::CreateMovesFile(const std::vector<std::string>& registeredLines, const std::vector<std::string>& specialStates)
 {
 	if (isCharacterIndexOutOfBound(m_charIndex))
 		return false;
 
 	const std::string name = getCharacterNameByIndexA(m_charIndex);
 	std::string text = ReplaceAll(kMovesHeader, "%CHAR%", name);
+	text += "#\n# Read from the game's own move list (already used; no need to copy these). A \"?\" line\n"
+		"# has inputs the window could not name: add it below with its notation.\n";
+	if (registeredLines.empty())
+		text += "#   (none found)\n";
+	for (const std::string& line : registeredLines)
+		text += "#   " + line + "\n";
+	text += "#\n# Every special state in " + name + "'s script, for reference. Many are follow-ups or effects\n"
+		"# rather than moves you input; the move is usually the first state of a family.\n";
 	if (specialStates.empty())
-		text += "# (The script could not be read, so the list is empty.)\n";
+		text += "#   (The script could not be read, so the list is empty.)\n";
 	for (const std::string& state : specialStates)
 		text += "#   " + state + "\n";
 	text += "\n";

@@ -56,8 +56,9 @@ Steps are worked out from what you write; hover a step to see exactly what ticks
 | `A+B` (`CT`), `6A+B` (`CA`), `EA` | Crush Trigger, Counter Assault, Exceed Accel | |
 | `NmlAtk2A`, `ThrowExe`, any state name | that state | shown as the move: `NmlAtk2A` shows `2A` |
 | `jc`, `sjc`, `dash`, `land`, `dl.`, `66`, `OD`, ... | nothing, never checked | auto-pass: ticks itself once the step before it lands |
-| `236D`, `j.214B`, `[4]6D` (not in the moves file) | any special, never a normal or throw | marked `?` |
-| `236D` with `236D = Skill1` in the moves file | that special only | |
+| `236A`, `623C`, `236236D`, `5D` (a special's input) | the move the game registers with that input | from the game's move list; `j.236A` is the same |
+| `236D` with `236D = Skill1` in the moves file | that special only | the moves file always wins |
+| a special input the game's list does not name | any special, never a normal or throw | marked `?` |
 | anything else | any move | marked `?` |
 
 An attack always needs its direction number: write `j.5C`, not `j.C`. That keeps `jc`
@@ -65,14 +66,43 @@ An attack always needs its direction number: write `j.5C`, not `j.C`. That keeps
 have (a typo) is marked `!` and still only accepts that exact state, so nothing else ticks it.
 
 `step | name` overrides all of this for one step: `5B | NmlAtk5B`, `j.5C | j.5C/j.5B`
-(either), or `| -` to make any step auto-pass.
+(either), or `| -` to make any step optional.
 
-### The moves file (specials)
+### Optional steps
+
+Put `| -` after a step to show it without checking it: `5B > 5C > 6D | - > 236A`. It passes
+as soon as the step before it lands (or when the combo starts, if it comes first), and does
+not count towards the n/m total. Use it for setups that do not hit, such as placing a summon,
+or for anything you do not want checked. Movement words (`jc`, `sjc`, `dash`, `land`, `dl.`)
+behave this way without the `| -`.
+
+### Where specials get their input: the game's move list
 
 Normals and throws follow a fixed naming scheme in the game's scripts, so they are decoded
-(the same rules `ScrStateNames` uses for the dummy-action move picker, run backwards). A
-character's specials have arbitrary names (`Skill1`, `GauntletHades`), so they need a
-mapping, one file per character: `BBCF_IM\Combos\Moves\<Character>.txt`.
+(the same rules `ScrStateNames` uses for the dummy-action move picker, run backwards).
+Specials have arbitrary names (`Assault_A`, `Skill1`), but each character's script registers
+every move it can input together with that input (`registerMove("Assault_A", 2)` then
+`moveInput(236)`, `moveInput(press A)`; commands 14001 / 14012 / 14002). The script reader
+keeps those registrations and the window turns them into notation, so `236A` tracks
+Kokonoe's `Assault_A` with no setup, and the move list shows it as `236A (Assault_A)`.
+
+How sure each part is:
+- Command IDs and sizes: high. They match the parser's own size tables and both public BBCF
+  databases (bbscript `static_db/bbcf.ron`, bbtools `static_db/bbcf`).
+- Input values: high for A-D (4/13/22/31) and 236/623/214/41236/421/63214/236236/214214
+  (172-179), which the game's motion table and the repo's Ghidra notes confirm. Medium for
+  22 (186) and charge 2-8 (189). Values the sources disagree on (632146) or that are not in
+  the table (release/hold buttons, 360s) are not guessed: that move is listed with a `?` and
+  its raw values, and needs a moves-file line.
+- Air versus ground: not known. A ground and an air version registered with the same inputs
+  both count for `236A`, and `j.236A` reads the same as `236A`.
+- Follow-ups and rekkas that are checked inside a move rather than registered are not in the
+  list; map them in the moves file if they matter.
+
+### The moves file (overrides)
+
+One file per character, `BBCF_IM\Combos\Moves\<Character>.txt`, for moves the game's list
+does not name or names wrongly. A line here always wins.
 
 ```
 # notation = StateName[/StateName...]
@@ -80,8 +110,9 @@ mapping, one file per character: `BBCF_IM\Combos\Moves\<Character>.txt`.
 214D = Skill2/Skill2Air
 ```
 
-The window offers to create the file when a combo has unmapped specials; it lists every
-special state in the character's script as comments. To find which state a special is, tick
+The window offers to create the file when a combo has unmapped specials; it lists, as
+comments, the moves read from the game's list (and any with inputs it could not name) and
+every special state in the character's script. To find which state a special is, tick
 **Show move names** and do the move: the list names the state each move was credited to.
 
 If you write a combo with unmapped specials (`5C > 236D`) and complete it, **Copy moves
@@ -98,15 +129,15 @@ ready to paste into `<Character>.txt` (rename it from "Recorded"):
 
 ```
 combo: Recorded
-B+C > StandDrive > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C
+B+C > 5D > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C
 ```
 
 - Normals are written as notation (`5C`, `3C`, `j.5C`, `5D (2nd)`), and the universal moves
   as their alias (`B+C`, `4B+C`, `j.B+C`, `A+B`, `6A+B`, `EA`).
-- A special is written the way the moves file names it (`236A` for `236A = Assault_A`). If
-  the moves file does not name it, it is written as its state name (`StandDrive`), which
-  tracks exactly; inputs for specials are never guessed. Replace the name with notation
-  once you have mapped it.
+- A special is written as its input: from the moves file if it names it, otherwise from the
+  game's move list (`236A` for `Assault_A`, `5D` for Kokonoe's `StandDrive`). If neither
+  knows it, it is written as its state name, which still tracks exactly; inputs are never
+  guessed.
 - Each step resolves back to exactly the state that landed (anything that would not, for
   example because a moves-file line took over `2C`, is written as the state name instead).
 - One step per move. A multi-hit move is one step. There is one exception: a later hit that
@@ -122,15 +153,15 @@ B+C > StandDrive > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C
 - The character's script is read once per character load: every state name, and the
   cancel lists (`whiffCancel` / `hitOrBlockCancel`) that name the moves you can cancel into.
 - The attacker's states are followed as they change. Some states start a move (any normal,
-  a cancel target, a special out of neutral or out of a normal, anything a step or the
-  moves file names). The rest continue the current move: `ThrowExe` after `NmlAtkThrow`,
+  a cancel target, a move the game's move list registers, a special out of neutral or out
+  of a normal, anything a step or the moves file names). The rest continue the current move: `ThrowExe` after `NmlAtkThrow`,
   `NmlAtk5D_2nd` after `NmlAtk5D`, a special's later states.
 - When the dummy's combo hit counter goes up, the move last started is credited, once. A
   multi-hit move is one step; the same move again is a new step. A projectile that hits
   after you recover still credits the special that threw it, if nothing new was started.
-- A special cancelled straight into another special counts as one move unless the script
-  lists the second as a cancel target or the moves file names it. Map supers and rekkas if
-  they do not tick.
+- A special cancelled straight into another special counts as one move unless the second is
+  a registered move, a cancel target, or named by the moves file. Map rekkas and follow-ups
+  if they do not tick.
 
 ## Code
 

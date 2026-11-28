@@ -261,6 +261,132 @@ void MoveTable::SetStates(const std::vector<std::string>& stateNames, const std:
 		m_cancelTargets.insert(Lower(target));
 }
 
+namespace
+{
+	// moveInput values. Motions are the game's motion table (0x9F5A00) from entry 172 on; the
+	// buttons are the "pressed within 5 frames" codes (22 = 0x16 = C, see
+	// docs/Research/TriggerTimingInvestigation.md). Both public BBCF databases (bbscript,
+	// bbtools) agree on every value here. Values they disagree on (632146: 182, 248 or 249)
+	// and release/hold buttons are left out on purpose: such a move gets no notation and can
+	// be mapped in the moves file instead.
+	struct InputName
+	{
+		unsigned int value;
+		const char* text;
+		bool button;
+	};
+	const InputName kInputNames[] = {
+		{ 4, "A", true }, { 13, "B", true }, { 22, "C", true }, { 31, "D", true },
+		{ 172, "236", false }, { 173, "623", false }, { 174, "214", false }, { 175, "41236", false },
+		{ 176, "421", false }, { 177, "63214", false }, { 178, "236236", false }, { 179, "214214", false },
+		{ 186, "22", false }, { 189, "[2]8", false },
+	};
+
+	const unsigned int kTypeSpecial = 2;
+	const unsigned int kTypeDistortion = 0x606;
+	const unsigned int kTypeAstral = 0x607;
+
+	// A normal's type: high byte = button 1..4 (A..D), low byte = direction 0..8 on the ground
+	// (numpad 1..9) or 9..17 in the air.
+	bool IsNormalType(unsigned int type)
+	{
+		const unsigned int button = type >> 8;
+		return button >= 1 && button <= 4 && (type & 0xFF) <= 17;
+	}
+
+	bool IsAttackType(unsigned int type)
+	{
+		return type == kTypeSpecial || type == kTypeDistortion || type == kTypeAstral || IsNormalType(type);
+	}
+}
+
+std::string MoveTable::NotationFromRegistration(unsigned int type, const std::vector<unsigned int>& inputs)
+{
+	if (IsNormalType(type))
+	{
+		const unsigned int direction = type & 0xFF;
+		std::string notation = direction >= 9 ? "j." : "";
+		notation += static_cast<char>('1' + direction % 9);
+		notation += "ABCD"[(type >> 8) - 1];
+		return notation;
+	}
+	if (type != kTypeSpecial && type != kTypeDistortion && type != kTypeAstral)
+		return std::string();
+
+	std::string motion;
+	std::string buttons;
+	for (unsigned int value : inputs)
+	{
+		const InputName* found = nullptr;
+		for (const InputName& name : kInputNames)
+		{
+			if (name.value == value)
+				found = &name;
+		}
+		if (!found)
+			return std::string(); // an input we cannot name: better no notation than a wrong one
+		if (found->button)
+			buttons += (buttons.empty() ? "" : "+") + std::string(found->text);
+		else
+			motion += found->text;
+	}
+	// A special always has a button; without one this is not a registration we understand.
+	return buttons.empty() ? std::string() : motion + buttons;
+}
+
+void MoveTable::SetRegisteredMoves(const std::vector<RegisteredMove>& moves)
+{
+	m_registeredByNotation.clear();
+	m_registeredNotation.clear();
+	m_registeredMoves.clear();
+	m_registeredLines.clear();
+	m_registeredTotal = 0;
+
+	for (const RegisteredMove& move : moves)
+	{
+		if (move.name.empty() || !IsAttackType(move.type))
+			continue; // walks, dashes and jumps are registered too; they are not attacks
+		++m_registeredTotal;
+
+		const std::string name = Canonical(move.name);
+		const std::string lower = Lower(name);
+		m_registeredMoves.insert(lower);
+
+		std::string notation = NotationFromRegistration(move.type, move.inputs);
+		// A normal-type registration only names a move the state-name decoding does not already
+		// cover. NmlAtk5C is 5C either way; and a throw or Crush Trigger registered under a button
+		// type must not take "5B" or "5C" away from the real normal.
+		if (!notation.empty() && IsNormalType(move.type))
+		{
+			const bool decodedByName = ScrStateNames::Categorize(name) == ScrStateNames::Category::Normal;
+			const bool slotTaken = m_states.count(Lower(NormalStateFor(Normalize(notation)))) > 0;
+			if (decodedByName || slotTaken)
+				notation.clear();
+		}
+
+		if (notation.empty())
+		{
+			if (!IsNormalType(move.type))
+			{
+				std::string raw;
+				for (unsigned int value : move.inputs)
+					raw += (raw.empty() ? "" : " ") + std::to_string(value);
+				m_registeredLines.push_back("? = " + name + "   (inputs not recognised: " + raw + ")");
+			}
+			continue;
+		}
+
+		std::vector<std::string>& states = m_registeredByNotation[Normalize(notation)];
+		if (std::find(states.begin(), states.end(), name) == states.end())
+			states.push_back(name);
+		if (!m_registeredNotation.count(lower))
+		{
+			m_registeredNotation[lower] = notation;
+			m_registeredLines.push_back(notation + " = " + name);
+		}
+	}
+}
+
 std::vector<int> MoveTable::SetUserMappings(const std::string& fileText)
 {
 	m_user.clear();
@@ -327,6 +453,19 @@ std::vector<std::string> MoveTable::KeysFor(const std::string& text, bool& outFo
 	auto state = m_states.find(Lower(Trim(text)));
 	if (state != m_states.end())
 		return { state->second };
+
+	// 2b. The character's own move list: "236A" is whatever the script registers as 236 + A.
+	// A ground and an air version registered with the same inputs both count, since what the
+	// air/ground condition value means is not known yet; "j.236A" is read the same way.
+	auto registered = m_registeredByNotation.find(n);
+	if (registered == m_registeredByNotation.end())
+	{
+		std::string ground = n;
+		if (StripAirPrefix(ground))
+			registered = m_registeredByNotation.find(ground);
+	}
+	if (registered != m_registeredByNotation.end())
+		return registered->second;
 
 	// 3. Direction + button.
 	const std::string normal = NormalStateFor(n);
@@ -459,6 +598,9 @@ std::string MoveTable::NotationFor(const std::string& state) const
 	auto user = m_userNotation.find(lower);
 	if (user != m_userNotation.end())
 		candidates.push_back(user->second);
+	auto registered = m_registeredNotation.find(lower);
+	if (registered != m_registeredNotation.end())
+		candidates.push_back(registered->second);
 	for (const WrittenAlias& alias : kWrittenAliases)
 	{
 		if (Lower(alias.state) == lower)
@@ -506,6 +648,10 @@ bool MoveTable::IsMoveStart(const std::string& state, const std::string& previou
 		}
 	}
 	if (m_userStates.count(lower))
+		return true;
+	// The script registers it as a move with its own input, so entering it is a new move even
+	// straight out of a special (StandDrive -> Assault_A).
+	if (m_registeredMoves.count(lower))
 		return true;
 
 	switch (ScrStateNames::Categorize(state))

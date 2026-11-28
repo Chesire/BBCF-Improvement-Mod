@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <cstring>
 
 
 // Per-parse telemetry, summarised into DEBUG.txt at the end of every parse_scr. These are the
@@ -264,6 +265,7 @@ int parse_state(char* addr,
 	//CMD = *(addr + offset);
 	offset += 4;
 	FrameInvuln invuln = FrameInvuln::None; //flag to turn on/off invuln windows
+	bool in_registration = false; // between a registerMove (14001) and its endRegisterMove (14002)
 	//int iter = 0;
 	//PS: I may have been calling uint32 char for some reason here, not sure why tbh, gotta double check before changing the comments
 	while (CMD != 0x1) {
@@ -441,6 +443,37 @@ int parse_state(char* addr,
 			memcpy(&hit_air_unblockable, addr + offset, 4);
 			offset += 4;
 			s->hit_air_unblockable = hit_air_unblockable;
+		}
+		// Move registration: which inputs make which move. Sizes match CmdList.h (14001 size_40,
+		// 14003/14012 size_8, 14013 size_36, 14002 size_4), so the walk advances exactly as the
+		// size tables below would; this only keeps what they would skip.
+		else if (CMD == 14001) {
+			scrMoveRegistration reg;
+			reg.name.assign(addr + offset, strnlen(addr + offset, 32));
+			offset += 32;
+			memcpy(&reg.type, addr + offset, 4);
+			offset += 4;
+			s->move_registrations.push_back(reg);
+			in_registration = true;
+		}
+		else if (CMD == 14012 || CMD == 14003) {
+			unsigned int value;
+			memcpy(&value, addr + offset, 4);
+			offset += 4;
+			if (in_registration && !s->move_registrations.empty()) {
+				if (CMD == 14012)
+					s->move_registrations.back().inputs.push_back(value);
+				else
+					s->move_registrations.back().conditions.push_back(value);
+			}
+		}
+		else if (CMD == 14013) {
+			if (in_registration && !s->move_registrations.empty())
+				s->move_registrations.back().subroutine.assign(addr + offset, strnlen(addr + offset, 32));
+			offset += 32;
+		}
+		else if (CMD == 14002) {
+			in_registration = false;
 		}
 		else if (CMD == 14068) {
 			///whiffCancel call(string[32]) set whiffcancel to moves

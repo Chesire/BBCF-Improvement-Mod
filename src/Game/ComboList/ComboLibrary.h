@@ -47,8 +47,9 @@ public:
 	// Writes a commented starter combo file for the loaded character if none exists yet.
 	bool CreateStarterFile();
 
-	// Writes a moves file listing the given special states as comments, if none exists yet.
-	bool CreateMovesFile(const std::vector<std::string>& specialStates);
+	// Writes a moves file, if none exists yet, listing as comments the moves read from the game's
+	// move list ("236A = Assault_A") and every special state in the script.
+	bool CreateMovesFile(const std::vector<std::string>& registeredLines, const std::vector<std::string>& specialStates);
 
 	int CharIndex() const { return m_charIndex; }
 	bool FileExists() const { return m_combosFile.Exists(); }

@@ -6,6 +6,7 @@
 #include "Game/ComboList/ComboTracker.h"
 #include "Game/ComboList/MoveTable.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -544,6 +545,76 @@ static void RecordingTests()
 	}
 }
 
+// The script's move registrations (registerMove + moveInput), as LoadMoveList hands them over.
+static void RegistrationTests()
+{
+	// Decoding a registration. 623C is the one documented on real game data: Ragna's AntiAirC
+	// is moveInput(173) + moveInput(22) (docs/Research/TriggerTimingInvestigation.md).
+	CHECK(MoveTable::NotationFromRegistration(2, { 173, 22 }) == "623C");
+	CHECK(MoveTable::NotationFromRegistration(2, { 172, 4 }) == "236A");
+	CHECK(MoveTable::NotationFromRegistration(2, { 174, 31 }) == "214D");
+	CHECK(MoveTable::NotationFromRegistration(2, { 186, 13 }) == "22B");
+	CHECK(MoveTable::NotationFromRegistration(0x606, { 178, 22 }) == "236236C");
+	CHECK(MoveTable::NotationFromRegistration(0x607, { 179, 31 }) == "214214D");
+	CHECK(MoveTable::NotationFromRegistration(0x404, {}) == "5D");   // D, direction 5 on the ground
+	CHECK(MoveTable::NotationFromRegistration(0x30D, {}) == "j.5C"); // C, direction 13 = jumping 5
+	CHECK(MoveTable::NotationFromRegistration(0x100, {}) == "1A");
+	CHECK(MoveTable::NotationFromRegistration(2, { 182, 22 }).empty()); // 632146: the sources disagree
+	CHECK(MoveTable::NotationFromRegistration(2, { 172 }).empty());     // no button
+	CHECK(MoveTable::NotationFromRegistration(6, {}).empty());          // a dash, not an attack
+
+	// A Kokonoe-like move list: StandDrive is her 5D, Assault_A her 236A with an air version
+	// registered on the same inputs. A throw registered under a button type must not take 5C.
+	MoveTable t = ReportTable();
+	t.SetRegisteredMoves({
+		{ "NmlAtk5C", 0x304, {} },
+		{ "StandDrive", 0x404, {} },
+		{ "Assault_A", 2, { 172, 4 } },
+		{ "Assault_A_Air", 2, { 172, 4 } },
+		{ "NmlAtkThrow", 0x304, {} },
+		{ "Mystery", 2, { 182, 22 } },
+		{ "CmnActFDash", 6, {} },
+	});
+	CHECK(t.RegisteredCount() == 6);
+	ResolvedStep special = R(t, "236A");
+	CHECK(special.match == StepMatch::Exact && special.keys.size() == 2 && special.keys[0] == "Assault_A");
+	CHECK(R(t, "j.236A").keys == special.keys);
+	CHECK(IsExact(R(t, "5D"), "StandDrive"));
+	CHECK(IsExact(R(t, "5C"), "NmlAtk5C"));
+	CHECK(t.NotationFor("Assault_A") == "236A");
+	CHECK(t.NotationFor("StandDrive") == "5D");
+	CHECK(t.NotationFor("NmlAtkThrow") == "B+C");
+	CHECK(t.NotationFor("Mystery") == "Mystery");
+	CHECK(t.IsMoveStart("Assault_A", "StandDrive", {})); // registered: its own move out of a special
+	const std::vector<std::string> lines = t.RegisteredMoveLines();
+	CHECK(std::find(lines.begin(), lines.end(), "236A = Assault_A") != lines.end());
+	CHECK(std::find(lines.begin(), lines.end(), "5D = StandDrive") != lines.end());
+	bool unknownListed = false;
+	for (const std::string& line : lines)
+		unknownListed |= line.find("Mystery") != std::string::npos && line.find("182 22") != std::string::npos;
+	CHECK(unknownListed);
+
+	// A moves-file line still overrides the game's list.
+	MoveTable overridden = ReportTable("236A = Mystery\n");
+	overridden.SetRegisteredMoves({ { "Assault_A", 2, { 172, 4 } } });
+	CHECK(IsExact(R(overridden, "236A"), "Mystery"));
+
+	// The reported combo with the move list loaded: 236A out of 5D is its own move, and the copy
+	// comes out in notation.
+	Sim s(t, "combo: starter\n5A > 5B\n");
+	PlayReportedCombo(s);
+	std::string listed;
+	for (const ComboHit& hit : s.t.Hits())
+		listed += (hit.newMove ? " " + hit.move : " +" + hit.state);
+	CHECK(listed.compare(0, 46, " NmlAtkThrow +ThrowExe +ThrowExe StandDrive As") == 0);
+	const std::string text = ComboRecording::RecordedComboText(s.t.Hits(), t);
+	std::printf("  report, with the game's move list:\n%s", text.c_str());
+	CHECK(text == "combo: Recorded\nB+C > 5D > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C\n");
+	Sim again(t, text);
+	PlayReportedCombo(again);
+	CHECK(again.State() == ComboRunState::Completed);
+}
+
 int main()
 {
 	ParserTests();
@@ -551,6 +622,7 @@ int main()
 	TrackerTests();
 	NotationTests();
 	RecordingTests();
+	RegistrationTests();
 	if (g_failures == 0)
 		std::printf("All combo list tests passed.\n");
 	return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
