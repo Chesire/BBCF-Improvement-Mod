@@ -622,7 +622,7 @@ struct ScriptBytes
 {
 	std::vector<char> bytes;
 	ScriptBytes& U32(unsigned int v) { char t[4]; std::memcpy(t, &v, 4); bytes.insert(bytes.end(), t, t + 4); return *this; }
-	ScriptBytes& Name(const char* n) { char f[32] = {}; std::strncpy(f, n, 31); bytes.insert(bytes.end(), f, f + 32); return *this; }
+	ScriptBytes& Name(const char* n) { char f[32] = {}; std::memcpy(f, n, std::min<size_t>(std::strlen(n), 31)); bytes.insert(bytes.end(), f, f + 32); return *this; }
 	ScriptBytes& Register(const char* n, unsigned int type) { return U32(14001).Name(n).U32(type); }
 	ScriptBytes& Input(unsigned int v) { return U32(14012).U32(v); }
 	ScriptBytes& End() { return U32(14002); }
