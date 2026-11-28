@@ -339,6 +339,7 @@ void MoveTable::SetRegisteredMoves(const std::vector<RegisteredMove>& moves)
 	m_registeredByNotation.clear();
 	m_registeredNotation.clear();
 	m_registeredMoves.clear();
+	m_sharedMoves.clear();
 	m_registeredLines.clear();
 	m_registeredTotal = 0;
 
@@ -379,10 +380,21 @@ void MoveTable::SetRegisteredMoves(const std::vector<RegisteredMove>& moves)
 		std::vector<std::string>& states = m_registeredByNotation[Normalize(notation)];
 		if (std::find(states.begin(), states.end(), name) == states.end())
 			states.push_back(name);
-		if (!m_registeredNotation.count(lower))
+		m_registeredLines.push_back(notation + " = " + name);
+
+		auto existing = m_registeredNotation.find(lower);
+		if (existing == m_registeredNotation.end())
 		{
 			m_registeredNotation[lower] = notation;
-			m_registeredLines.push_back(notation + " = " + name);
+		}
+		else if (Normalize(existing->second) != Normalize(notation))
+		{
+			// The same move under another input (1D..9D all placing a summon). Show it by its
+			// neutral version, 5D or j.5D, when there is one.
+			m_sharedMoves.insert(lower);
+			const bool neutral = IsNormalType(move.type) && (move.type & 0xFF) % 9 == 4;
+			if (neutral)
+				existing->second = notation;
 		}
 	}
 }
@@ -563,6 +575,8 @@ ResolvedStep MoveTable::Resolve(const std::string& notation, const std::string& 
 	{
 		step.match = StepMatch::Exact;
 		step.notInMoveList = !found && HasStates();
+		for (const std::string& key : step.keys)
+			step.directionUnchecked |= m_sharedMoves.count(Lower(key)) > 0;
 		return step;
 	}
 

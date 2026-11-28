@@ -69,6 +69,8 @@ namespace
 			ImGui::Text("Ticked off by %s", keys.c_str());
 			if (step.notInMoveList)
 				ImGui::TextColored(kWarningColor, "This character has no such state. Typo?");
+			if (step.directionUnchecked)
+				ImGui::TextDisabled("The game starts this same move from several inputs (e.g. 5D and 6D),\nso which direction you held is not checked.");
 			break;
 		}
 		case StepMatch::AnySpecial:
@@ -146,13 +148,13 @@ void ComboListWindow::LoadMoveList()
 		cancelTargets.insert(state->hit_or_block_cancel.begin(), state->hit_or_block_cancel.end());
 		if (ScrStateNames::Categorize(state->name) == ScrStateNames::Category::Special)
 			m_specialStates.push_back(state->name);
-		// The moves the script registers with their inputs: where 236A = Assault_A comes from.
-		for (const scrMoveRegistration& reg : state->move_registrations)
-			registered.push_back({ reg.name, reg.type, reg.inputs });
 		delete state;
 	}
 
 	m_moves.SetStates(names, std::vector<std::string>(cancelTargets.begin(), cancelTargets.end()));
+	// The moves the script registers with their inputs: where 236A = Assault_A comes from.
+	for (const scrMoveRegistration& reg : parse_scr_move_registrations(GetBbcfBaseAdress(), m_watchedSide + 1))
+		registered.push_back({ reg.name, reg.type, reg.inputs });
 	m_moves.SetRegisteredMoves(registered);
 	m_moveListChar = m_library.CharIndex();
 	m_moveListSide = m_watchedSide;

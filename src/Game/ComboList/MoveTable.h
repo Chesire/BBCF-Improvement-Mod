@@ -39,6 +39,9 @@ struct ResolvedStep
 	StepMatch match = StepMatch::AnyMove;
 	std::vector<std::string> keys;  // for Exact: the accepted state names
 	bool notInMoveList = false;     // Exact, but the character has no such state (likely typo)
+	// Exact, but the game's script registers that move under several inputs (Kokonoe's 5D and
+	// 6D are both StandDrive), so which of them was done cannot be told from the state.
+	bool directionUnchecked = false;
 };
 
 // A move as the character's script registers it (scrMoveRegistration, without the game types).
@@ -129,6 +132,7 @@ private:
 	std::map<std::string, std::vector<std::string>> m_registeredByNotation; // normalized -> states
 	std::map<std::string, std::string> m_registeredNotation;             // lower state -> notation
 	std::set<std::string> m_registeredMoves;                             // lower state names
+	std::set<std::string> m_sharedMoves;  // lower names registered under more than one notation
 	std::vector<std::string> m_registeredLines;
 	size_t m_registeredTotal = 0;
 	// Lower-cased state -> the notation of the first moves-file line naming it, as written.

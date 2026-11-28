@@ -1,13 +1,15 @@
 // Tests for the combo list parser and hit tracker. No Windows or game needed:
-//   g++ -std=c++14 -I src tools/tests/combo_list_tests.cpp src/Game/ComboList/ComboParser.cpp src/Game/ComboList/ComboTracker.cpp src/Game/ComboList/MoveTable.cpp src/Game/Scr/ScrStateNames.cpp -o combo_list_tests
+//   g++ -std=c++14 -I src tools/tests/combo_list_tests.cpp src/Game/ComboList/ComboParser.cpp src/Game/ComboList/ComboTracker.cpp src/Game/ComboList/MoveTable.cpp src/Game/Scr/ScrStateNames.cpp src/Game/Scr/ScrMoveRegistrations.cpp -o combo_list_tests
 //   ./combo_list_tests
-// (MSVC: cl /EHsc /I src tools\tests\combo_list_tests.cpp src\Game\ComboList\ComboParser.cpp src\Game\ComboList\ComboTracker.cpp src\Game\ComboList\MoveTable.cpp src\Game\Scr\ScrStateNames.cpp)
+// (MSVC: cl /EHsc /I src tools\tests\combo_list_tests.cpp src\Game\ComboList\ComboParser.cpp src\Game\ComboList\ComboTracker.cpp src\Game\ComboList\MoveTable.cpp src\Game\Scr\ScrStateNames.cpp src\Game\Scr\ScrMoveRegistrations.cpp)
 #include "Game/ComboList/ComboParser.h"
 #include "Game/ComboList/ComboTracker.h"
 #include "Game/ComboList/MoveTable.h"
+#include "Game/Scr/ScrMoveRegistrations.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 
 static int g_failures = 0;
@@ -615,6 +617,79 @@ static void RegistrationTests()
 	CHECK(again.State() == ComboRunState::Completed);
 }
 
+// A script's code as bytes, built command by command.
+struct ScriptBytes
+{
+	std::vector<char> bytes;
+	ScriptBytes& U32(unsigned int v) { char t[4]; std::memcpy(t, &v, 4); bytes.insert(bytes.end(), t, t + 4); return *this; }
+	ScriptBytes& Name(const char* n) { char f[32] = {}; std::strncpy(f, n, 31); bytes.insert(bytes.end(), f, f + 32); return *this; }
+	ScriptBytes& Register(const char* n, unsigned int type) { return U32(14001).Name(n).U32(type); }
+	ScriptBytes& Input(unsigned int v) { return U32(14012).U32(v); }
+	ScriptBytes& End() { return U32(14002); }
+};
+
+// Sizes for the few other commands the synthetic script uses: beginSubroutine (8), endSubroutine
+// (9), an if with two arguments (4), endIf (5), sprite (2).
+static unsigned int TestCommandSize(unsigned int command)
+{
+	switch (command)
+	{
+	case 8: return 36;
+	case 9: return 4;
+	case 4: return 12;
+	case 5: return 4;
+	case 2: return 40;
+	default: return 0;
+	}
+}
+
+static void ScannerTests()
+{
+	ScriptBytes code;
+	code.U32(2).Name("kk000_00").U32(3);                 // some state's sprite before it
+	code.U32(8).Name("MatchInit");                       // the init subroutine
+	code.Register("Assault_A", 2).Input(172).Input(4).End();
+	code.Register("StandDrive", 0x404).U32(14003).U32(0x2000).End();
+	code.Register("StandDrive", 0x405).End();
+	code.U32(14001).Name("bad name!").U32(2);            // decoy: not an identifier
+	code.Register("Ghost", 0x9999).End();                // decoy: implausible type
+	code.Register("Cond", 2).U32(4).U32(1).U32(2).Input(174).Input(22).U32(5).End(); // an if inside
+	code.Register("Weird", 2).Input(173).U32(777).Input(22).End();                   // unknown command
+	code.U32(14013).Name("Leftover");                    // not in a block: ignored
+	code.U32(9);
+	code.U32(14001).Name("Cut");                         // truncated at the end of the buffer
+
+	const std::vector<scrMoveRegistration> regs =
+		FindMoveRegistrations(code.bytes.data(), code.bytes.size(), &TestCommandSize);
+	std::string names;
+	for (const scrMoveRegistration& r : regs)
+		names += " " + r.name;
+	CHECK(names == " Assault_A StandDrive StandDrive Cond Weird");
+	if (regs.size() == 5)
+	{
+		CHECK(regs[0].type == 2 && regs[0].inputs == std::vector<unsigned int>({ 172, 4 }));
+		CHECK(regs[1].type == 0x404 && regs[1].conditions == std::vector<unsigned int>({ 0x2000 }));
+		CHECK(regs[3].inputs == std::vector<unsigned int>({ 174, 22 }));
+		CHECK(regs[4].inputs == std::vector<unsigned int>({ 173 })); // stopped at the unknown command
+		CHECK(MoveTable::NotationFromRegistration(regs[3].type, regs[3].inputs) == "214C");
+		CHECK(MoveTable::NotationFromRegistration(regs[4].type, regs[4].inputs).empty()); // no button read: no guess
+	}
+	CHECK(FindMoveRegistrations(nullptr, 100, &TestCommandSize).empty());
+	CHECK(FindMoveRegistrations(code.bytes.data(), 7, &TestCommandSize).empty());
+
+	// One move under several inputs (Kokonoe's xD all placing the Graviton): every input
+	// resolves to it, the step says the direction is not checked, and it shows as 5D.
+	MoveTable t = ReportTable();
+	t.SetRegisteredMoves({ { "StandDrive", 0x403, {} }, { "StandDrive", 0x404, {} }, { "StandDrive", 0x405, {} },
+		{ "Assault_A", 2, { 172, 4 } } });
+	const ResolvedStep six = R(t, "6D");
+	CHECK(IsExact(six, "StandDrive") && six.directionUnchecked);
+	CHECK(IsExact(R(t, "4D"), "StandDrive") && R(t, "5D").directionUnchecked);
+	CHECK(t.NotationFor("StandDrive") == "5D");
+	CHECK(!R(t, "236A").directionUnchecked);
+	CHECK(t.RegisteredWithNotation() == 2);
+}
+
 int main()
 {
 	ParserTests();
@@ -623,6 +698,7 @@ int main()
 	NotationTests();
 	RecordingTests();
 	RegistrationTests();
+	ScannerTests();
 	if (g_failures == 0)
 		std::printf("All combo list tests passed.\n");
 	return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

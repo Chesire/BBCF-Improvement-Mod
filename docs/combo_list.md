@@ -82,9 +82,22 @@ Normals and throws follow a fixed naming scheme in the game's scripts, so they a
 (the same rules `ScrStateNames` uses for the dummy-action move picker, run backwards).
 Specials have arbitrary names (`Assault_A`, `Skill1`), but each character's script registers
 every move it can input together with that input (`registerMove("Assault_A", 2)` then
-`moveInput(236)`, `moveInput(press A)`; commands 14001 / 14012 / 14002). The script reader
-keeps those registrations and the window turns them into notation, so `236A` tracks
-Kokonoe's `Assault_A` with no setup, and the move list shows it as `236A (Assault_A)`.
+`moveInput(236)`, `moveInput(press A)`; commands 14001 / 14012 / 14002). The window turns
+those registrations into notation, so `236A` tracks Kokonoe's `Assault_A` with no setup, and
+the move list shows it as `236A (Assault_A)`.
+
+The registrations are in a subroutine (the character's init), which is not in the script's
+state index that `parse_scr` walks. `parse_scr_move_registrations` (with the scanner in
+`src/Game/Scr/ScrMoveRegistrations.*`) finds them by scanning the script's code instead, kept
+inside the script file's bounds from its FPAC entry. **Show move names** reports how many
+were found; if it says the move list was not found, the debug log has an `[Scr]` line saying
+why.
+
+One move can be registered under several inputs: Kokonoe's 1D..9D are all `StandDrive`
+(the direction only decides where the Graviton goes). Every one of those inputs then
+resolves to that move and the step is shown as `5D`, but which direction you held is **not
+checked** (hover says so). Telling them apart would need the held direction, and the mod's
+battle-input hook that could provide it is disabled under Wine/Proton.
 
 How sure each part is:
 - Command IDs and sizes: high. They match the parser's own size tables and both public BBCF
@@ -169,6 +182,7 @@ B+C > 5D > 236A > 6B > 5C > 3C > 236A > 6B > 5C > 3C
 |---|---|
 | Parser (plain C++, no Win32/ImGui) | `src/Game/ComboList/ComboParser.*` |
 | Notation to state names (plain C++) | `src/Game/ComboList/MoveTable.*` |
+| Finding the script's move registrations (plain C++) | `src/Game/Scr/ScrMoveRegistrations.*` |
 | Hit tracking rules, and the copy buttons' text (`ComboRecording`, plain C++) | `src/Game/ComboList/ComboTracker.*` |
 | File loading and change polling | `src/Game/ComboList/ComboLibrary.*` |
 | Window | `src/Overlay/Window/ComboListWindow.*` |

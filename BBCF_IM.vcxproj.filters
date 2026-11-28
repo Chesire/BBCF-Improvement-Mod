@@ -226,6 +226,7 @@
     <ClCompile Include="src\Overlay\Window\Ranked\RankedLeaderboardWindow.cpp" />
     <ClCompile Include="src\Game\Scr\ScrStateReader.cpp" />
     <ClCompile Include="src\Game\Scr\ScrStateNames.cpp" />
+    <ClCompile Include="src\Game\Scr\ScrMoveRegistrations.cpp" />
     <ClCompile Include="src\Overlay\Window\ScrWindow.cpp" />
     <ClCompile Include="src\Overlay\Window\TasWindow.cpp" />
     <ClCompile Include="src\Overlay\Window\TasInputListWindow.cpp" />
@@ -500,6 +501,7 @@
     <ClInclude Include="src\Game\Scr\ScrStateEntry.h" />
     <ClInclude Include="src\Game\Scr\ScrStateReader.h" />
     <ClInclude Include="src\Game\Scr\ScrStateNames.h" />
+    <ClInclude Include="src\Game\Scr\ScrMoveRegistrations.h" />
     <ClInclude Include="src\Overlay\Window\FrameAdvantage\FrameAdvantage.h" />
     <ClInclude Include="src\Game\ReplayStates\FrameState.h" />
     <ClInclude Include="src\Game\Menus\TrainingSetupMenu.h" />
